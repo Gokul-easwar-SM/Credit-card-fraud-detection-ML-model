@@ -33,6 +33,7 @@ services:
   - type: web
     name: fraudsentinel-frontend
     runtime: static
+    plan: free
     rootDir: fraudsentinel-frontend
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist

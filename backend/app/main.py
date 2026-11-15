@@ -54,6 +54,17 @@ def create_app() -> FastAPI:
     )
 
     # Register Routers
+    @app.get("/", tags=["root"])
+    def root():
+        return {
+            "name": "FraudSentinel AI Intelligence API",
+            "version": "2.0.0",
+            "status": "online",
+            "docs": "/docs",
+            "health": "/health",
+            "message": "FraudSentinel backend is running successfully on Render with in-memory store and ML models loaded.",
+        }
+
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(customers.router)

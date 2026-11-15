@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-export const BASE: string = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+export const BASE: string =
+  (typeof window !== "undefined" && localStorage.getItem("fraudsentinel_api_url")) ||
+  import.meta.env.VITE_API_URL ||
+  (typeof window !== "undefined" && window.location.hostname === "localhost" ? "http://localhost:8000" : "https://fraudsentinel-lxzr.onrender.com");
 
 export type User = { id: number; username: string; email: string; role: "analyst" | "admin" | "auditor" };
 export type Card = { id: number; card_number_masked: string; card_type: string; status: string; daily_limit?: number; current_day_spend?: number; last_freeze_reason?: string | null; external_customer_id?: string };

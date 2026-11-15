@@ -1,0 +1,133 @@
+{
+  "dataset_summary": {
+    "n_test": 56337,
+    "n_fraud": 526,
+    "fraud_rate": 0.00934,
+    "test_window": [
+      "2026-03-22 00:08:25+05:30",
+      "2026-04-30 23:54:35+05:30"
+    ]
+  },
+  "threshold_used": 0.25,
+  "confusion_matrix": {
+    "true_positive": 454,
+    "false_positive": 670,
+    "true_negative": 55141,
+    "false_negative": 72
+  },
+  "primary_metrics": {
+    "precision": 0.4039,
+    "recall": 0.8631,
+    "f1_score": 0.5503,
+    "false_positive_rate": 0.012,
+    "pr_auc": 0.7832,
+    "roc_auc": 0.9809,
+    "accuracy": 0.9874
+  },
+  "bootstrap_95ci": {
+    "f1_score": [
+      0.5206,
+      0.5799
+    ],
+    "recall": [
+      0.8317,
+      0.8909
+    ],
+    "pr_auc": [
+      0.7507,
+      0.8159
+    ]
+  },
+  "pattern_recall": {
+    "amount_spike": {
+      "total_incidents": 16,
+      "flagged": 16,
+      "recall": 1.0
+    },
+    "impossible_travel": {
+      "total_incidents": 17,
+      "flagged": 17,
+      "recall": 1.0
+    },
+    "low_and_slow": {
+      "total_incidents": 241,
+      "flagged": 179,
+      "recall": 0.7427
+    },
+    "new_device_night": {
+      "total_incidents": 19,
+      "flagged": 19,
+      "recall": 1.0
+    },
+    "shared_device_ring": {
+      "total_incidents": 90,
+      "flagged": 88,
+      "recall": 0.9778
+    },
+    "velocity_burst": {
+      "total_incidents": 143,
+      "flagged": 135,
+      "recall": 0.9441
+    }
+  },
+  "alert_budget_recall": {
+    "recall_at_1pct_budget": 0.7376,
+    "recall_at_2pct_budget": 0.8631,
+    "recall_at_5pct_budget": 0.9049
+  },
+  "precision_at_k": {
+    "precision_at_50": 1.0,
+    "precision_at_100": 1.0,
+    "precision_at_200": 1.0,
+    "precision_at_500": 0.724
+  },
+  "cost_analysis": {
+    "fn_fraud_loss_inr": 137450.7,
+    "fp_review_cost_inr": 33500.0,
+    "total_cost_inr": 170950.7,
+    "sensitivity": {
+      "total_cost_at_c_fp_25inr": 154200.7,
+      "total_cost_at_c_fp_50inr": 170950.7,
+      "total_cost_at_c_fp_100inr": 204450.7,
+      "total_cost_at_c_fp_250inr": 304950.7
+    }
+  },
+  "ablation_comparison": {
+    "1_logistic_regression": {
+      "precision": 0.0118,
+      "recall": 0.9639,
+      "f1": 0.0233,
+      "pr_auc": 0.345,
+      "roc_auc": 0.8345
+    },
+    "2_random_forest": {
+      "precision": 0.4227,
+      "recall": 0.827,
+      "f1": 0.5595,
+      "pr_auc": 0.7686,
+      "roc_auc": 0.9581
+    },
+    "3_lightgbm_raw": {
+      "precision": 0.0615,
+      "recall": 0.9392,
+      "f1": 0.1155,
+      "pr_auc": 0.818,
+      "roc_auc": 0.9777
+    },
+    "4_lightgbm_calibrated": {
+      "precision": 0.5191,
+      "recall": 0.8536,
+      "f1": 0.6456,
+      "pr_auc": 0.818,
+      "roc_auc": 0.9777
+    },
+    "5_champion_blended": {
+      "precision": 0.4039,
+      "recall": 0.8631,
+      "f1": 0.5503,
+      "pr_auc": 0.7832,
+      "roc_auc": 0.9809
+    }
+  },
+  "disclaimer": "Fraud is rule-injected; results on synthetic data are optimistic vs real production banking data."
+}

@@ -1,0 +1,60 @@
+{
+  "threshold_optimal": 0.25,
+  "threshold_low": 0.125,
+  "threshold_medium": 0.312,
+  "threshold_high": 0.70,
+  "decision_policy": {
+    "approve": {
+      "max_score": 0.125,
+      "action": "approve",
+      "description": "Frictionless approval; transaction cleared cleanly without friction."
+    },
+    "verify": {
+      "min_score": 0.125,
+      "max_score": 0.312,
+      "action": "verify",
+      "description": "Elevated anomaly; automated step-up customer verification requested."
+    },
+    "review": {
+      "min_score": 0.312,
+      "max_score": 0.70,
+      "action": "review",
+      "description": "High fraud probability; routed to fraud analyst investigation queue."
+    },
+    "decline": {
+      "min_score": 0.70,
+      "action": "decline",
+      "description": "Critical fraud risk; automated protection hold and card freeze recommended."
+    }
+  },
+  "cost_assumptions": {
+    "c_fp_inr": 50.0,
+    "c_fn_metric": "transaction_amount_inr",
+    "min_validation_cost_inr": 34937.11
+  },
+  "risk_bands": {
+    "low": {
+      "max": 0.125,
+      "action": "approve",
+      "review_required": false
+    },
+    "medium": {
+      "min": 0.125,
+      "max": 0.312,
+      "action": "verify",
+      "review_required": false
+    },
+    "high": {
+      "min": 0.312,
+      "max": 0.70,
+      "action": "review",
+      "review_required": true
+    },
+    "critical": {
+      "min": 0.70,
+      "max": 1.0,
+      "action": "decline",
+      "review_required": true
+    }
+  }
+}

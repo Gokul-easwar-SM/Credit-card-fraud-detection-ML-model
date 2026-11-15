@@ -1,0 +1,29 @@
+{
+  "threshold_optimal": 0.25,
+  "threshold_low": 0.125,
+  "threshold_high": 0.312,
+  "cost_assumptions": {
+    "c_fp_inr": 50.0,
+    "c_fn_metric": "transaction_amount_inr",
+    "min_validation_cost_inr": 34937.11
+  },
+  "risk_bands": {
+    "low": {
+      "max": 0.125,
+      "action": "monitor",
+      "review_required": false
+    },
+    "medium": {
+      "min": 0.125,
+      "max": 0.312,
+      "action": "verify",
+      "review_required": false
+    },
+    "high": {
+      "min": 0.312,
+      "max": 1.0,
+      "action": "investigate",
+      "review_required": true
+    }
+  }
+}

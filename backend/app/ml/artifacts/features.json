@@ -1,0 +1,15 @@
+[
+  "history_length",
+  "amount_zscore",
+  "amount_ratio_mean",
+  "hour_deviation",
+  "time_since_last_txn_sec",
+  "velocity_1h_count",
+  "velocity_1h_amount",
+  "velocity_24h_count",
+  "velocity_24h_amount",
+  "speed_kmh",
+  "is_new_device",
+  "is_new_channel",
+  "device_shared_cust_count"
+]

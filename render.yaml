@@ -1,0 +1,46 @@
+services:
+  # ============================================================================
+  # FraudSentinel - Backend Web Service (Render Python Runtime)
+  # Zero-database in-memory high performance inference & fraud operations engine
+  # ============================================================================
+  - type: web
+    name: fraudsentinel-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: prod
+      - key: LOG_LEVEL
+        value: INFO
+      - key: SECRET_KEY
+        generateValue: true
+      # Real SMS Delivery with MSG91 (Optional: Leave empty for simulation mode)
+      - key: MSG91_AUTH_KEY
+        sync: false
+      - key: MSG91_SENDER_ID
+        sync: false
+      - key: MSG91_FLOW_ID
+        sync: false
+
+  # ============================================================================
+  # FraudSentinel - Frontend Static Site (Render Static Site)
+  # React + Vite + TypeScript financial intelligence dashboard
+  # ============================================================================
+  - type: web
+    name: fraudsentinel-frontend
+    runtime: static
+    rootDir: fraudsentinel-frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    autoDeploy: true
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        value: https://fraudsentinel-backend.onrender.com

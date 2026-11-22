@@ -56,10 +56,14 @@ class Card:
 class Customer:
     id: int
     external_customer_id: str
+    name: str | None = None
     home_city: str | None = "Coimbatore"
     home_lat: float | None = 11.0168
     home_lon: float | None = 76.9558
-    avg_amount: Decimal | None = Decimal("1250.00")
+    avg_amount: Decimal | None = Decimal("1450.00")
+    std_amount: Decimal | None = Decimal("420.00")
+    typical_hours: str = "08:30 - 21:30"
+    common_channels: list[str] = field(default_factory=lambda: ["pos", "online"])
     phone_e164: str | None = "+919876542019"
     is_simulated: bool = True
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -86,7 +90,23 @@ class Transaction:
     channel: str = "pos"
     lat: float | None = None
     lon: float | None = None
-    source: str = "manual"
+    merchant_id: str | None = None
+    merchant_name: str | None = None
+    merchant_category: str | None = None
+    terminal_id: str | None = None
+    city: str | None = None
+    ip_address: str | None = None
+    location_source: str = "terminal_pos"
+    prev_txn_id: int | None = None
+    prev_city: str | None = None
+    prev_lat: float | None = None
+    prev_lon: float | None = None
+    prev_merchant: str | None = None
+    distance_from_prev_km: float | None = None
+    time_since_prev_sec: float | None = None
+    speed_kmh: float | None = None
+    is_unusual_location: bool = False
+    source: str = "bank_switch"
     is_simulated: bool = True
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -226,9 +246,35 @@ class MemoryStore:
         self._seq[entity] += 1
         return self._seq[entity]
 
+    def reset(self) -> None:
+        """Reset in-memory state cleanly and reseed defaults."""
+        with self._lock:
+            self.users.clear()
+            self.users_by_username.clear()
+            self.customers.clear()
+            self.customers_by_ext_id.clear()
+            self.cards.clear()
+            self.cards_by_customer_id.clear()
+            self.devices.clear()
+            self.devices_by_key.clear()
+            self.transactions.clear()
+            self.transactions_by_ext_id.clear()
+            self.model_versions.clear()
+            self.predictions.clear()
+            self.predictions_by_txn_id.clear()
+            self.investigations.clear()
+            self.investigations_by_txn_id.clear()
+            self.alerts.clear()
+            self.alerts_by_txn_id.clear()
+            self.customer_responses.clear()
+            self.audit_logs.clear()
+            for k in self._seq:
+                self._seq[k] = 0
+            self.seed_defaults()
+
     # --- Seeding ---
     def seed_defaults(self) -> None:
-        """Seed initial users, demo customers, baseline transactions, and cards."""
+        """Seed initial users, realistic demo customer profiles with 20-35 historical transactions each."""
         with self._lock:
             # 1. Users
             if not self.users:
@@ -237,12 +283,20 @@ class MemoryStore:
 
             # 2. Customers & Cards
             if not self.customers_by_ext_id.get("DEMO001"):
+                now = datetime.now(timezone.utc)
+                from app.services.terminal_registry import REGISTERED_TERMINALS, ONLINE_GATEWAYS
+
+                # Profile 1: Aarav Patel (DEMO001) - Established Mature Profile in Coimbatore
                 demo_cust = self.create_customer(
                     external_customer_id="DEMO001",
+                    name="Aarav Patel (Primary Demo)",
                     home_city="Coimbatore",
                     home_lat=11.0168,
                     home_lon=76.9558,
-                    avg_amount=Decimal("1250.00"),
+                    avg_amount=Decimal("1450.00"),
+                    std_amount=Decimal("420.00"),
+                    typical_hours="08:30 - 21:30",
+                    common_channels=["pos", "online", "atm"],
                     phone_e164="+919876542019",
                 )
                 self.create_card(
@@ -252,73 +306,341 @@ class MemoryStore:
                     status="active",
                     daily_limit=Decimal("150000.00"),
                 )
+                dev_a = self.get_or_create_device("DEV-DEMO001-A")
+                dev_a.device_type = "mobile_android"
+                dev_a.os = "Android 14 (Pixel 8 Pro)"
+                dev_b = self.get_or_create_device("DEV-DEMO001-B")
+                dev_b.device_type = "laptop_chrome"
+                dev_b.os = "macOS (Chrome 128)"
 
-                # Seed baseline coffee transaction for DEMO001 in Coimbatore 15 mins prior
-                now = datetime.now(timezone.utc)
-                base_device = self.get_or_create_device("DEV-DEMO001-A")
-                t_base = self.create_transaction(
-                    external_txn_id=f"TXN-BASE-{int(now.timestamp()) - 900}",
+                # Seed 32 historical transactions across 28 days for DEMO001
+                cbe_terms = [
+                    REGISTERED_TERMINALS["TERM-CBE-POS-101"],
+                    REGISTERED_TERMINALS["TERM-CBE-POS-102"],
+                    REGISTERED_TERMINALS["TERM-CBE-POS-103"],
+                    REGISTERED_TERMINALS["ATM-CBE-01"],
+                ]
+                for day_offset in range(28, 0, -1):
+                    # 1 to 2 transactions per day
+                    t_time = now - timedelta(days=day_offset, hours=random.randint(2, 6), minutes=random.randint(10, 50))
+                    term = cbe_terms[day_offset % len(cbe_terms)]
+                    is_online = (day_offset % 4 == 0)
+                    ch = "online" if is_online else term.channel
+                    amt = Decimal(str(round(random.uniform(250.0, 3200.0), 2)))
+                    t_hist = self.create_transaction(
+                        external_txn_id=f"TXN-HIST-D001-{day_offset:03d}",
+                        customer_id=demo_cust.id,
+                        device_id=dev_a.id if is_online else None,
+                        occurred_at=t_time,
+                        amount=amt,
+                        currency="INR",
+                        channel=ch,
+                        lat=term.lat,
+                        lon=term.lon,
+                        merchant_id="MERCH-ONL-AMZN" if is_online else term.merchant_id,
+                        merchant_name="Amazon India Marketplace" if is_online else term.merchant_name,
+                        merchant_category="ecommerce_marketplace" if is_online else term.merchant_category,
+                        terminal_id="GATEWAY-AMZN" if is_online else term.terminal_id,
+                        city="Coimbatore",
+                        ip_address="49.37.112.45" if is_online else None,
+                        location_source="ip_geolocation" if is_online else ("terminal_pos" if ch == "pos" else "atm_registry"),
+                        distance_from_prev_km=round(random.uniform(0.5, 4.2), 2),
+                        time_since_prev_sec=round(random.uniform(43200.0, 86400.0), 1),
+                        speed_kmh=round(random.uniform(5.0, 25.0), 1),
+                        is_unusual_location=False,
+                        source="bank_switch",
+                        is_simulated=True,
+                    )
+                    self.create_prediction(
+                        transaction_id=t_hist.id,
+                        model_version_id=1,
+                        raw_score=0.03,
+                        calibrated_score=0.02,
+                        predicted_label="genuine",
+                        risk_band="low",
+                        recommended_action="monitor",
+                        decision="approve",
+                        financial_priority_score=float(amt) * 0.02,
+                        priority_category="Low",
+                        evidence_sufficiency="mature",
+                        reason_codes=["Standard baseline spend", "Recognized cardholder merchant corridor"],
+                    )
+
+                # Seed immediately previous transaction for DEMO001 (Coffee swipe in Coimbatore, 25 mins ago)
+                last_term = REGISTERED_TERMINALS["TERM-CBE-POS-101"]
+                t_last = self.create_transaction(
+                    external_txn_id=f"TXN-PREV-D001-COFFEE",
                     customer_id=demo_cust.id,
-                    device_id=base_device.id,
-                    occurred_at=now - timedelta(minutes=15),
-                    amount=Decimal("250.00"),
+                    device_id=None,
+                    occurred_at=now - timedelta(minutes=25),
+                    amount=Decimal("380.00"),
                     currency="INR",
                     channel="pos",
-                    lat=11.0168,
-                    lon=76.9558,
-                    source="simulator",
+                    lat=last_term.lat,
+                    lon=last_term.lon,
+                    merchant_id=last_term.merchant_id,
+                    merchant_name=last_term.merchant_name,
+                    merchant_category=last_term.merchant_category,
+                    terminal_id=last_term.terminal_id,
+                    city="Coimbatore",
+                    location_source="terminal_pos",
+                    distance_from_prev_km=1.8,
+                    time_since_prev_sec=28800.0,
+                    speed_kmh=0.2,
+                    is_unusual_location=False,
+                    source="bank_switch",
                     is_simulated=True,
                 )
-                # Low risk prediction
                 self.create_prediction(
-                    transaction_id=t_base.id,
+                    transaction_id=t_last.id,
                     model_version_id=1,
-                    raw_score=0.04,
-                    calibrated_score=0.02,
+                    raw_score=0.02,
+                    calibrated_score=0.01,
                     predicted_label="genuine",
                     risk_band="low",
                     recommended_action="monitor",
-                    reason_codes=["Standard baseline spend", "Recognized cardholder device"],
+                    decision="approve",
+                    financial_priority_score=3.8,
+                    priority_category="Low",
+                    evidence_sufficiency="mature",
+                    reason_codes=["Routine morning spend", "Local home corridor"],
                 )
 
-            # 3. Seed other realistic customers
-            cities = [
-                ("Coimbatore", 11.0168, 76.9558),
-                ("Chennai", 13.0827, 80.2707),
-                ("Bengaluru", 12.9716, 77.5946),
-                ("Hyderabad", 17.3850, 78.4867),
-                ("Mumbai", 19.0760, 72.8777),
-                ("Delhi", 28.6139, 77.2090),
-                ("Kochi", 9.9312, 76.2673),
-            ]
-            for i in range(1, 16):
-                cid = f"CUST{i:05d}"
-                if cid not in self.customers_by_ext_id:
-                    city, lat, lon = cities[(i - 1) % len(cities)]
-                    c = self.create_customer(
-                        external_customer_id=cid,
-                        home_city=city,
-                        home_lat=round(lat + random.uniform(-0.02, 0.02), 4),
-                        home_lon=round(lon + random.uniform(-0.02, 0.02), 4),
-                        avg_amount=Decimal(str(round(random.uniform(900.0, 7500.0), 2))),
-                        phone_e164=f"+91987654{2000 + i:04d}",
+                # Profile 2: Priya Sharma (CUST00001) - Chennai Mature Profile
+                c1 = self.create_customer(
+                    external_customer_id="CUST00001",
+                    name="Priya Sharma",
+                    home_city="Chennai",
+                    home_lat=13.0827,
+                    home_lon=80.2707,
+                    avg_amount=Decimal("2800.00"),
+                    std_amount=Decimal("850.00"),
+                    typical_hours="09:00 - 22:00",
+                    common_channels=["pos", "online"],
+                    phone_e164="+919876542001",
+                )
+                self.create_card(
+                    customer_id=c1.id,
+                    card_number_masked="•••• •••• •••• 4182",
+                    card_type="Visa Platinum",
+                    status="active",
+                    daily_limit=Decimal("200000.00"),
+                )
+                dev_c1 = self.get_or_create_device("DEV-CUST00001-A")
+                dev_c1.device_type = "mobile_ios"
+                dev_c1.os = "iOS 18 (iPhone 15)"
+
+                che_terms = [
+                    REGISTERED_TERMINALS["TERM-CHE-POS-201"],
+                    REGISTERED_TERMINALS["TERM-CHE-POS-202"],
+                    REGISTERED_TERMINALS["ATM-CHE-01"],
+                ]
+                for day_offset in range(24, 0, -1):
+                    t_time = now - timedelta(days=day_offset, hours=random.randint(1, 4))
+                    term = che_terms[day_offset % len(che_terms)]
+                    amt = Decimal(str(round(random.uniform(600.0, 4800.0), 2)))
+                    t_c1 = self.create_transaction(
+                        external_txn_id=f"TXN-HIST-C001-{day_offset:03d}",
+                        customer_id=c1.id,
+                        device_id=dev_c1.id if day_offset % 3 == 0 else None,
+                        occurred_at=t_time,
+                        amount=amt,
+                        currency="INR",
+                        channel=term.channel,
+                        lat=term.lat,
+                        lon=term.lon,
+                        merchant_id=term.merchant_id,
+                        merchant_name=term.merchant_name,
+                        merchant_category=term.merchant_category,
+                        terminal_id=term.terminal_id,
+                        city="Chennai",
+                        location_source="terminal_pos" if term.channel == "pos" else "atm_registry",
+                        distance_from_prev_km=round(random.uniform(0.8, 6.0), 2),
+                        time_since_prev_sec=round(random.uniform(36000.0, 72000.0), 1),
+                        speed_kmh=round(random.uniform(5.0, 30.0), 1),
+                        is_unusual_location=False,
+                        source="bank_switch",
+                        is_simulated=True,
                     )
-                    last4 = f"{1000 + (i * 247) % 9000}"
-                    self.create_card(
-                        customer_id=c.id,
-                        card_number_masked=f"•••• •••• •••• {last4}",
-                        card_type="Visa Platinum" if i % 2 == 0 else "Mastercard World",
-                        status="active",
-                        daily_limit=Decimal("100000.00"),
+                    self.create_prediction(
+                        transaction_id=t_c1.id,
+                        model_version_id=1,
+                        raw_score=0.03,
+                        calibrated_score=0.02,
+                        predicted_label="genuine",
+                        risk_band="low",
+                        recommended_action="monitor",
+                        decision="approve",
+                        financial_priority_score=float(amt) * 0.02,
+                        priority_category="Low",
+                        evidence_sufficiency="mature",
+                        reason_codes=["Routine retail spend", "Verified Chennai home corridor"],
                     )
 
-            # 4. Seed realistic relationship graph cluster: shared hardware device between CUST00002 and CUST00003
-            c2 = self.customers_by_ext_id.get("CUST00002")
-            c3 = self.customers_by_ext_id.get("CUST00003")
-            if c2 and c3 and not self.transactions_by_ext_id.get("TXN-SEED-MULE-01"):
+                # Profile 3: Vikram Reddy (CUST00002) - Bengaluru Mature Profile (1 past verified alert)
+                c2 = self.create_customer(
+                    external_customer_id="CUST00002",
+                    name="Vikram Reddy",
+                    home_city="Bengaluru",
+                    home_lat=12.9716,
+                    home_lon=77.5946,
+                    avg_amount=Decimal("3500.00"),
+                    std_amount=Decimal("1200.00"),
+                    typical_hours="10:00 - 23:00",
+                    common_channels=["pos", "online", "atm"],
+                    phone_e164="+919876542002",
+                )
+                self.create_card(
+                    customer_id=c2.id,
+                    card_number_masked="•••• •••• •••• 7731",
+                    card_type="Mastercard World",
+                    status="active",
+                    daily_limit=Decimal("300000.00"),
+                )
+                dev_c2 = self.get_or_create_device("DEV-CUST00002-A")
+                blr_terms = [
+                    REGISTERED_TERMINALS["TERM-BLR-POS-301"],
+                    REGISTERED_TERMINALS["TERM-BLR-POS-302"],
+                    REGISTERED_TERMINALS["ATM-BLR-01"],
+                ]
+                for day_offset in range(30, 0, -1):
+                    t_time = now - timedelta(days=day_offset, hours=random.randint(2, 5))
+                    term = blr_terms[day_offset % len(blr_terms)]
+                    amt = Decimal(str(round(random.uniform(900.0, 6500.0), 2)))
+                    t_c2 = self.create_transaction(
+                        external_txn_id=f"TXN-HIST-C002-{day_offset:03d}",
+                        customer_id=c2.id,
+                        device_id=dev_c2.id if day_offset % 2 == 0 else None,
+                        occurred_at=t_time,
+                        amount=amt,
+                        currency="INR",
+                        channel=term.channel,
+                        lat=term.lat,
+                        lon=term.lon,
+                        merchant_id=term.merchant_id,
+                        merchant_name=term.merchant_name,
+                        merchant_category=term.merchant_category,
+                        terminal_id=term.terminal_id,
+                        city="Bengaluru",
+                        location_source="terminal_pos" if term.channel == "pos" else "atm_registry",
+                        source="bank_switch",
+                        is_simulated=True,
+                    )
+                    self.create_prediction(
+                        transaction_id=t_c2.id,
+                        model_version_id=1,
+                        raw_score=0.04,
+                        calibrated_score=0.03,
+                        predicted_label="genuine",
+                        risk_band="low",
+                        recommended_action="monitor",
+                        decision="approve",
+                        financial_priority_score=float(amt) * 0.03,
+                        priority_category="Low",
+                        evidence_sufficiency="mature",
+                        reason_codes=["Routine tech corridor spend"],
+                    )
+
+                # Profile 4: Ananya Iyer (CUST00003) - Mumbai Luxury/Retail Profile
+                c3 = self.create_customer(
+                    external_customer_id="CUST00003",
+                    name="Ananya Iyer",
+                    home_city="Mumbai",
+                    home_lat=19.0760,
+                    home_lon=72.8777,
+                    avg_amount=Decimal("5200.00"),
+                    std_amount=Decimal("1800.00"),
+                    typical_hours="11:00 - 22:30",
+                    common_channels=["pos", "online"],
+                    phone_e164="+919876542003",
+                )
+                self.create_card(
+                    customer_id=c3.id,
+                    card_number_masked="•••• •••• •••• 5590",
+                    card_type="Visa Infinite",
+                    status="active",
+                    daily_limit=Decimal("500000.00"),
+                )
+
+                # Profile 5: Rajesh Kumar (CUST00004) - Delhi Profile
+                c4 = self.create_customer(
+                    external_customer_id="CUST00004",
+                    name="Rajesh Kumar",
+                    home_city="Delhi",
+                    home_lat=28.6139,
+                    home_lon=77.2090,
+                    avg_amount=Decimal("1850.00"),
+                    std_amount=Decimal("600.00"),
+                    typical_hours="09:00 - 20:00",
+                    common_channels=["pos", "online", "atm"],
+                    phone_e164="+919876542004",
+                )
+                self.create_card(
+                    customer_id=c4.id,
+                    card_number_masked="•••• •••• •••• 8211",
+                    card_type="Mastercard Platinum",
+                    status="active",
+                    daily_limit=Decimal("150000.00"),
+                )
+
+                # Profile 6: Sneha Verma (CUST00005) - Cold-Start Profile (Only 1 transaction)
+                c5 = self.create_customer(
+                    external_customer_id="CUST00005",
+                    name="Sneha Verma (New Account - Cold Start)",
+                    home_city="Hyderabad",
+                    home_lat=17.3850,
+                    home_lon=78.4867,
+                    avg_amount=Decimal("1200.00"),
+                    std_amount=Decimal("300.00"),
+                    typical_hours="09:00 - 21:00",
+                    common_channels=["pos"],
+                    phone_e164="+919876542005",
+                )
+                self.create_card(
+                    customer_id=c5.id,
+                    card_number_masked="•••• •••• •••• 1044",
+                    card_type="Visa Classic",
+                    status="active",
+                    daily_limit=Decimal("75000.00"),
+                )
+                # Seed only 1 initial transaction for CUST00005 to demonstrate cold-start handling
+                t_cold = self.create_transaction(
+                    external_txn_id="TXN-COLD-C005-01",
+                    customer_id=c5.id,
+                    device_id=None,
+                    occurred_at=now - timedelta(days=2),
+                    amount=Decimal("850.00"),
+                    currency="INR",
+                    channel="pos",
+                    lat=17.4359,
+                    lon=78.3828,
+                    merchant_id="MERCH-HYD-MALL-01",
+                    merchant_name="Inorbit Mall Cyberabad",
+                    merchant_category="retail",
+                    terminal_id="TERM-HYD-POS-601",
+                    city="Hyderabad",
+                    location_source="terminal_pos",
+                    source="bank_switch",
+                    is_simulated=True,
+                )
+                self.create_prediction(
+                    transaction_id=t_cold.id,
+                    model_version_id=1,
+                    raw_score=0.08,
+                    calibrated_score=0.07,
+                    predicted_label="genuine",
+                    risk_band="low",
+                    recommended_action="monitor",
+                    decision="approve",
+                    financial_priority_score=59.5,
+                    priority_category="Low",
+                    evidence_sufficiency="cold_start",
+                    reason_codes=["Account onboarding activation swipe", "Cold-start profile (<3 transactions)"],
+                )
+
+                # Seed relationship graph cluster: shared device between CUST00002 and CUST00003
                 shared_dev = self.get_or_create_device("DEV-MULE-SHARED-09")
                 shared_dev.device_type = "mobile_android"
-                now = datetime.now(timezone.utc)
                 t2 = self.create_transaction(
                     external_txn_id="TXN-SEED-MULE-01",
                     customer_id=c2.id,
@@ -327,8 +649,8 @@ class MemoryStore:
                     amount=Decimal("48500.00"),
                     currency="INR",
                     channel="online",
-                    lat=13.0827,
-                    lon=80.2707,
+                    lat=12.9716,
+                    lon=77.5946,
                     source="simulator",
                     is_simulated=True,
                 )
@@ -361,8 +683,8 @@ class MemoryStore:
                     amount=Decimal("52000.00"),
                     currency="INR",
                     channel="online",
-                    lat=13.0827,
-                    lon=80.2707,
+                    lat=19.0760,
+                    lon=72.8777,
                     source="simulator",
                     is_simulated=True,
                 )
@@ -414,10 +736,14 @@ class MemoryStore:
     def create_customer(
         self,
         external_customer_id: str,
+        name: str | None = None,
         home_city: str | None = None,
         home_lat: float | None = None,
         home_lon: float | None = None,
         avg_amount: Decimal | None = None,
+        std_amount: Decimal | None = None,
+        typical_hours: str | None = "08:30 - 21:30",
+        common_channels: list[str] | None = None,
         phone_e164: str | None = None,
         is_simulated: bool = True,
     ) -> Customer:
@@ -426,10 +752,14 @@ class MemoryStore:
             c = Customer(
                 id=cid,
                 external_customer_id=external_customer_id,
+                name=name or (f"Customer {external_customer_id}" if external_customer_id != "DEMO001" else "Aarav Patel (Demo)"),
                 home_city=home_city,
                 home_lat=home_lat,
                 home_lon=home_lon,
                 avg_amount=avg_amount,
+                std_amount=std_amount or Decimal("400.00"),
+                typical_hours=typical_hours or "08:30 - 21:30",
+                common_channels=common_channels or ["pos", "online"],
                 phone_e164=phone_e164,
                 is_simulated=is_simulated,
             )
@@ -520,7 +850,23 @@ class MemoryStore:
         channel: str = "pos",
         lat: float | None = None,
         lon: float | None = None,
-        source: str = "manual",
+        merchant_id: str | None = None,
+        merchant_name: str | None = None,
+        merchant_category: str | None = None,
+        terminal_id: str | None = None,
+        city: str | None = None,
+        ip_address: str | None = None,
+        location_source: str = "terminal_pos",
+        prev_txn_id: int | None = None,
+        prev_city: str | None = None,
+        prev_lat: float | None = None,
+        prev_lon: float | None = None,
+        prev_merchant: str | None = None,
+        distance_from_prev_km: float | None = None,
+        time_since_prev_sec: float | None = None,
+        speed_kmh: float | None = None,
+        is_unusual_location: bool = False,
+        source: str = "bank_switch",
         is_simulated: bool = True,
     ) -> Transaction:
         with self._lock:
@@ -536,6 +882,22 @@ class MemoryStore:
                 channel=channel,
                 lat=lat,
                 lon=lon,
+                merchant_id=merchant_id,
+                merchant_name=merchant_name,
+                merchant_category=merchant_category,
+                terminal_id=terminal_id,
+                city=city,
+                ip_address=ip_address,
+                location_source=location_source,
+                prev_txn_id=prev_txn_id,
+                prev_city=prev_city,
+                prev_lat=prev_lat,
+                prev_lon=prev_lon,
+                prev_merchant=prev_merchant,
+                distance_from_prev_km=distance_from_prev_km,
+                time_since_prev_sec=time_since_prev_sec,
+                speed_kmh=speed_kmh,
+                is_unusual_location=is_unusual_location,
                 source=source,
                 is_simulated=is_simulated,
             )

@@ -6,7 +6,26 @@ export const BASE: string =
 
 export type User = { id: number; username: string; email: string; role: "analyst" | "admin" | "auditor" };
 export type Card = { id: number; card_number_masked: string; card_type: string; status: string; daily_limit?: number; current_day_spend?: number; last_freeze_reason?: string | null; external_customer_id?: string };
-export type Customer = { id: number; external_customer_id: string; name?: string; phone_masked?: string; phone_e164?: string; home_city: string; home_lat: number; home_lon: number; avg_amount?: number; primary_card?: Card; cards?: Card[]; devices?: string[] | { device_key: string; device_type?: string; os?: string; is_trusted?: boolean }[]; is_simulated?: boolean };
+export type Customer = {
+  id: number;
+  external_customer_id: string;
+  name?: string;
+  phone_masked?: string;
+  phone_e164?: string;
+  home_city: string;
+  home_lat: number;
+  home_lon: number;
+  avg_amount?: number;
+  primary_card?: Card;
+  cards?: Card[];
+  devices?: string[] | { device_key: string; device_type?: string; os?: string; is_trusted?: boolean }[];
+  is_simulated?: boolean;
+  total_historical_txns?: number;
+  known_devices?: string[];
+  usual_locations?: string[];
+  common_channels?: string[];
+  typical_hours?: number[];
+};
 
 export type DecisionPolicyTier = "approve" | "verify" | "review" | "decline";
 export type PriorityCategory = "Low" | "Medium" | "High" | "Critical";
@@ -30,7 +49,28 @@ export type Prediction = {
 
 export type DriverFactor = { feature: string; shap_importance: number; feature_value: number; reason?: string };
 export type AlertSummary = { id: number; channel: string; status: string; message: string; delivery_state?: "simulated" | "accepted" | "delivered" | "failed"; provider?: string; provider_message_id?: string; phone_masked?: string; error?: string | null; dispatched_at?: string };
-export type CustomerHistorySummary = { customer_id: string; name: string; home_city: string; card_number_masked?: string; card_status?: string; total_transactions: number; avg_amount: number; min_amount: number; max_amount: number; purchase_frequency: string; usual_locations: string[]; known_devices: string[]; previous_fraud_count: number; previous_flagged_count: number };
+export type CustomerHistorySummary = {
+  customer_id: string;
+  name: string;
+  home_city: string;
+  home_lat?: number;
+  home_lon?: number;
+  card_number_masked?: string;
+  card_status?: string;
+  total_transactions: number;
+  avg_amount: number;
+  std_amount?: number;
+  min_amount: number;
+  max_amount: number;
+  typical_hours?: string;
+  common_channels?: string[];
+  purchase_frequency: string;
+  usual_locations: string[];
+  known_devices: string[];
+  previous_fraud_count: number;
+  previous_flagged_count: number;
+  investigation_history?: Array<{ txn_id: number; external_txn_id: string; status: string; notes?: string }>;
+};
 
 export type Txn = {
   id: number;
@@ -42,6 +82,24 @@ export type Txn = {
   channel: string;
   lat?: number;
   lon?: number;
+  latitude?: number;
+  longitude?: number;
+  merchant_id?: string;
+  merchant_name?: string;
+  merchant_category?: string;
+  terminal_id?: string;
+  city?: string;
+  ip_address?: string;
+  location_source?: string;
+  distance_from_prev_km?: number;
+  time_since_prev_sec?: number;
+  speed_kmh?: number;
+  is_unusual_location?: boolean;
+  prev_txn_id?: number;
+  prev_city?: string;
+  prev_lat?: number;
+  prev_lon?: number;
+  prev_merchant?: string;
   device_key?: string;
   source?: string;
   is_simulated?: boolean;
@@ -235,6 +293,17 @@ export const api = {
   alerts: (q = "") => req<AlertSummary[]>(`/alerts?${q}`),
   respondAlert: (alertId: number, response: "yes_me" | "not_me") => req<AlertSummary>(`/alerts/${alertId}/respond`, { method: "POST", body: { response } }),
   exportFeedbackUrl: () => `${BASE}/investigations/export/feedback`,
+  simulatorStatus: () => req<{ is_running: boolean; rate_hz: number; emitted_count: number; last_emitted_at: string | null }>("/simulator/status"),
+  simulatorStart: (rate_hz = 1.0) => req<{ is_running: boolean }>("/simulator/start", { method: "POST", body: { rate_hz } }),
+  simulatorStop: () => req<{ is_running: boolean }>("/simulator/stop", { method: "POST" }),
+  simulatorScenario: (scenario: string, customer_id?: string) => req<Txn[]>("/simulator/scenario", { method: "POST", body: { scenario, customer_id } }),
+  simulatorTerminals: () => req<{
+    terminals: Array<{ terminal_id: string; merchant_id: string; merchant_name: string; merchant_category: string; channel: string; city: string; lat: number; lon: number; address: string }>;
+    online_gateways: Array<{ gateway_id: string; merchant_id: string; merchant_name: string; merchant_category: string }>;
+    ip_presets: Array<{ ip: string; city: string; lat: number | null; lon: number | null; isp: string; is_vpn?: boolean }>;
+  }>("/simulator/terminals"),
+  simulatorCustomEvent: (body: { customer_id: string; amount: number; channel: string; terminal_id?: string; merchant_id?: string; ip_address?: string; device_key?: string }) => req<Txn>("/simulator/event", { method: "POST", body }),
+  lockCardFromInvestigation: (invId: number) => req<{ action: string; message: string; card_status: string }>(`/investigations/${invId}/lock-card`, { method: "POST" }),
 };
 
 export function useLoad<T>(fn: () => Promise<T>, deps: unknown[] = []) {
@@ -250,7 +319,18 @@ export function useStream(onEvent: (type: string, data: unknown) => void) {
     const es = new EventSource(`${BASE}/stream/transactions`);
     es.onopen = () => setState("live");
     es.onerror = () => setState("reconnecting"); // browser retries automatically
-    es.onmessage = (e) => { try { const p = JSON.parse(e.data); if (p.event_type !== "heartbeat") onEvent(p.event_type, p.data); } catch { /* ignore malformed */ } };
+    es.onmessage = (e) => {
+      try {
+        const p = JSON.parse(e.data);
+        if (p.event_type && p.event_type !== "heartbeat") {
+          onEvent(p.event_type, p.data);
+        } else if (p.external_txn_id) {
+          onEvent("transaction_scored", p);
+        }
+      } catch {
+        /* ignore malformed */
+      }
+    };
     return () => es.close();
   }, []); // eslint-disable-line
   return state;

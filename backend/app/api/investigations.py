@@ -244,7 +244,7 @@ def update_investigation(
         inv.notes = req.notes
     inv.updated_at = datetime.now(timezone.utc)
 
-    # If analyst confirmed fraud, automatically freeze card and dispatch customer SMS notification
+    # If analyst confirmed fraud, automatically freeze card in simulation and dispatch customer SMS notification
     if req.status == "confirmed_fraud" and prev_status != "confirmed_fraud":
         txn = memory_store.get_transaction(inv.transaction_id)
         if txn is not None:
@@ -252,7 +252,7 @@ def update_investigation(
             card = memory_store.get_card_by_customer_id(txn.customer_id)
             if card is not None and card.status != "frozen":
                 card.status = "frozen"
-                card.last_freeze_reason = f"Confirmed fraud on transaction #{txn.id} by analyst {current_user.username}"
+                card.last_freeze_reason = f"Confirmed fraud on transaction #{txn.id} by analyst {current_user.username} (Simulated Action)"
                 card.updated_at = datetime.now(timezone.utc)
 
             if cust is not None:
@@ -262,6 +262,20 @@ def update_investigation(
                     card=card,
                     analyst_username=current_user.username,
                 )
+    elif req.status == "step_up_requested":
+        txn = memory_store.get_transaction(inv.transaction_id)
+        if txn is not None:
+            pred = memory_store.get_prediction_by_txn_id(txn.id)
+            memory_store.create_alert(
+                transaction_id=txn.id,
+                prediction_id=pred.id if pred else None,
+                channel="simulated",
+                message=(
+                    f"[SECURITY STEP-UP VERIFICATION] Bank analyst {current_user.username} requested 2-way verification "
+                    f"for transaction INR {float(txn.amount):,.2f} at {txn.city or 'Unknown'}. Reply YES if authorized or NO if fraudulent."
+                ),
+                status="pending",
+            )
 
     memory_store.log_audit(
         action="investigation_decision",
@@ -274,10 +288,65 @@ def update_investigation(
             "new_status": req.status,
             "notes": req.notes,
             "analyst": current_user.username,
+            "simulated_environment": True,
         },
     )
 
     return get_investigation(inv_id)
+
+
+@router.post("/{inv_id}/lock-card")
+def lock_card_from_investigation(
+    inv_id: int,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Temporarily lock/freeze or unfreeze card in core banking simulation."""
+    inv = memory_store.get_investigation(inv_id)
+    if inv is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found")
+
+    txn = memory_store.get_transaction(inv.transaction_id)
+    if txn is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+
+    card = memory_store.get_card_by_customer_id(txn.customer_id)
+    if card is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found for customer")
+
+    # Toggle freeze state
+    if card.status == "frozen":
+        card.status = "active"
+        card.last_freeze_reason = None
+        action_taken = "unfrozen"
+    else:
+        card.status = "frozen"
+        card.last_freeze_reason = f"Protective lock applied during investigation #{inv.id} by analyst {current_user.username} (Simulated)"
+        action_taken = "frozen"
+
+    card.updated_at = datetime.now(timezone.utc)
+
+    memory_store.log_audit(
+        action=f"card_{action_taken}",
+        entity_type="card",
+        entity_id=str(card.id),
+        user_id=current_user.id,
+        details={
+            "investigation_id": inv.id,
+            "card_status": card.status,
+            "reason": card.last_freeze_reason,
+            "simulated": True,
+        },
+    )
+
+    return {
+        "investigation_id": inv.id,
+        "card_id": card.id,
+        "card_number_masked": card.card_number_masked,
+        "card_status": card.status,
+        "action": action_taken,
+        "message": f"Simulated Action: Card {card.card_number_masked} has been {action_taken} in core banking simulation.",
+        "environment_notice": "DEMO / SANDBOX ONLY: No real payment rails or cardholder credit lines were affected.",
+    }
 
 
 @router.get("/export/feedback")

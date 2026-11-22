@@ -200,22 +200,37 @@ def build_customer_history_summary(
         known_devices = [f"DEV-{customer.external_customer_id}-A"]
 
     amounts = [float(t.amount) for t in prior_txns]
-    avg_amt = float(round(float(np.mean(amounts)), 2)) if amounts else float(customer.avg_amount or 1250.0)
+    avg_amt = float(round(float(np.mean(amounts)), 2)) if amounts else float(customer.avg_amount or 1450.0)
+    std_amt = float(round(float(np.std(amounts)), 2)) if len(amounts) > 1 else float(customer.std_amount or 400.0)
 
     usual_cities = [customer.home_city or "Coimbatore"]
-    if len(prior_txns) >= 3:
-        usual_cities = list(set([customer.home_city or "Coimbatore"]))
+    if prior_txns:
+        prior_cities = [t.city for t in prior_txns if t.city]
+        if prior_cities:
+            from collections import Counter
+            counts = Counter(prior_cities)
+            usual_cities = [c for c, _ in counts.most_common(3)]
+            if customer.home_city and customer.home_city not in usual_cities:
+                usual_cities.append(customer.home_city)
 
     prev_fraud_count = 0
     prev_flagged_count = 0
+    past_investigations = []
     for t in prior_txns:
         pred = memory_store.get_prediction_by_txn_id(t.id)
         if pred:
             if pred.risk_band in ("medium", "high"):
                 prev_flagged_count += 1
             inv = memory_store.get_investigation_by_txn_id(t.id)
-            if inv and inv.status == "confirmed_fraud":
-                prev_fraud_count += 1
+            if inv:
+                past_investigations.append({
+                    "txn_id": t.id,
+                    "external_txn_id": t.external_txn_id,
+                    "status": inv.status,
+                    "notes": inv.notes,
+                })
+                if inv.status == "confirmed_fraud":
+                    prev_fraud_count += 1
 
     if len(prior_txns) >= 2:
         try:
@@ -233,23 +248,29 @@ def build_customer_history_summary(
 
     return {
         "customer_id": customer.external_customer_id,
-        "name": (
-            "FraudSentinel Demo Customer"
+        "name": customer.name or (
+            "Aarav Patel (Primary Demo)"
             if customer.external_customer_id == "DEMO001"
             else f"Customer {customer.external_customer_id}"
         ),
         "home_city": customer.home_city or "Coimbatore",
+        "home_lat": customer.home_lat or 11.0168,
+        "home_lon": customer.home_lon or 76.9558,
         "card_number_masked": card.card_number_masked if card else "•••• •••• •••• 9901",
         "card_status": card.status if card else "active",
         "total_transactions": len(prior_txns),
         "avg_amount": avg_amt,
+        "std_amount": std_amt,
         "min_amount": min(amounts) if amounts else avg_amt,
         "max_amount": max(amounts) if amounts else avg_amt,
+        "typical_hours": customer.typical_hours or "08:30 - 21:30",
+        "common_channels": customer.common_channels or ["pos", "online", "atm"],
         "purchase_frequency": freq_desc,
         "usual_locations": usual_cities,
         "known_devices": known_devices,
         "previous_fraud_count": prev_fraud_count,
         "previous_flagged_count": prev_flagged_count,
+        "investigation_history": past_investigations,
     }
 
 
@@ -272,9 +293,9 @@ def process_transaction(
     if cust is None:
         cust = memory_store.create_customer(
             external_customer_id=txn_in.external_customer_id,
-            home_city=None,
-            home_lat=txn_in.lat,
-            home_lon=txn_in.lon,
+            home_city=txn_in.city or "Coimbatore",
+            home_lat=txn_in.lat or 11.0168,
+            home_lon=txn_in.lon or 76.9558,
             avg_amount=Decimal(str(txn_in.amount)),
             is_simulated=txn_in.is_simulated,
         )
@@ -284,27 +305,122 @@ def process_transaction(
     if txn_in.device_key:
         device = memory_store.get_or_create_device(txn_in.device_key)
 
-    # 4. Fetch strictly prior history from memory store
+    # 4. Bank Infrastructure Location & Merchant Resolution
+    from app.services.terminal_registry import lookup_terminal, resolve_online_location, ONLINE_GATEWAYS
+    from app.ml.features import haversine_km
+
+    lat = txn_in.lat
+    lon = txn_in.lon
+    city = txn_in.city
+    merchant_id = txn_in.merchant_id
+    merchant_name = txn_in.merchant_name
+    merchant_category = txn_in.merchant_category
+    terminal_id = txn_in.terminal_id
+    location_source = "terminal_pos"
+
+    if txn_in.channel in ("pos", "atm"):
+        term_info = lookup_terminal(txn_in.terminal_id)
+        if term_info:
+            lat = term_info.lat
+            lon = term_info.lon
+            city = term_info.city
+            merchant_id = term_info.merchant_id
+            merchant_name = term_info.merchant_name
+            merchant_category = term_info.merchant_category
+            terminal_id = term_info.terminal_id
+            location_source = "terminal_pos" if txn_in.channel == "pos" else "atm_registry"
+        else:
+            if lat is None:
+                lat = cust.home_lat or 11.0168
+            if lon is None:
+                lon = cust.home_lon or 76.9558
+            city = city or cust.home_city or "Coimbatore"
+            location_source = "terminal_pos" if txn_in.channel == "pos" else "atm_registry"
+            if not merchant_name:
+                merchant_name = f"Merchant Terminal {terminal_id or 'POS'}"
+                merchant_category = "retail"
+    elif txn_in.channel == "online":
+        if txn_in.ip_address:
+            ip_lat, ip_lon, ip_city, loc_src = resolve_online_location(txn_in.ip_address)
+            lat = ip_lat if ip_lat is not None else cust.home_lat
+            lon = ip_lon if ip_lon is not None else cust.home_lon
+            city = ip_city or cust.home_city or "Coimbatore"
+            location_source = loc_src
+        else:
+            lat = cust.home_lat or 11.0168
+            lon = cust.home_lon or 76.9558
+            city = city or cust.home_city or "Coimbatore"
+            location_source = "missing_ip"
+
+        if merchant_id in ONLINE_GATEWAYS:
+            gw = ONLINE_GATEWAYS[merchant_id]
+            merchant_name = gw["merchant_name"]
+            merchant_category = gw["merchant_category"]
+        elif not merchant_name:
+            merchant_name = "Online Payment Gateway"
+            merchant_category = "ecommerce_retail"
+
+    # 5. Fetch strictly prior history from memory store
     cust_hist = get_customer_history(memory_store, cust.id, txn_in.occurred_at)
     dev_hist = get_device_history(memory_store, device.id, txn_in.occurred_at) if device is not None else None
 
-    # 5. Compute behavioural features
+    # Previous transaction metrics (distance, elapsed time, travel speed)
+    prior_txns_list = memory_store.get_customer_prior_transactions(cust.id, txn_in.occurred_at)
+    prev_txn = prior_txns_list[-1] if prior_txns_list else None
+
+    prev_txn_id = None
+    prev_city = None
+    prev_lat = None
+    prev_lon = None
+    prev_merchant = None
+    distance_from_prev_km = None
+    time_since_prev_sec = None
+    calc_speed_kmh = None
+
+    if prev_txn is not None:
+        prev_txn_id = prev_txn.id
+        prev_city = prev_txn.city or cust.home_city
+        prev_lat = prev_txn.lat
+        prev_lon = prev_txn.lon
+        prev_merchant = prev_txn.merchant_name or prev_txn.terminal_id
+        if lat is not None and lon is not None and prev_lat is not None and prev_lon is not None:
+            distance_from_prev_km = round(float(haversine_km(prev_lat, prev_lon, lat, lon)), 2)
+            dt = max(0.0, (txn_in.occurred_at - prev_txn.occurred_at).total_seconds())
+            time_since_prev_sec = round(dt, 1)
+            calc_speed_kmh = round(float(min(distance_from_prev_km / max(dt / 3600.0, 1e-4), 1500.0)), 1) if dt > 0 else 0.0
+
+    home_dist = 0.0
+    if lat is not None and lon is not None and cust.home_lat is not None and cust.home_lon is not None:
+        home_dist = float(haversine_km(cust.home_lat, cust.home_lon, lat, lon))
+    is_unusual_location = bool(home_dist > 100.0)
+
+    # 6. Compute behavioural features
+    cur_txn_dict = txn_in.model_dump()
+    cur_txn_dict["lat"] = lat if lat is not None else (cust.home_lat or 11.0168)
+    cur_txn_dict["lon"] = lon if lon is not None else (cust.home_lon or 76.9558)
+
     features = compute_features_single(
-        current_txn=txn_in.model_dump(),
+        current_txn=cur_txn_dict,
         customer_history=cust_hist,
         device_history=dev_hist,
     )
+    if calc_speed_kmh is not None:
+        features["speed_kmh"] = calc_speed_kmh
 
-    # 6. ML Scoring & Risk Banding
+    # 7. ML Scoring & Risk Banding
     feat_df = pd.DataFrame([features])[list(model_service.feature_names)]
     calibrated_score = float(model_service.pipeline.predict_proba(feat_df)[0])
     raw_supervised_score = float(model_service.pipeline.supervised_model.predict_proba(feat_df)[:, 1][0])
 
     # Rule-assisted hybrid safeguards for severe physical velocity and spend shocks
-    if features.get("speed_kmh", 0) > 500 or (features.get("amount_ratio_mean", 1) > 20 and float(txn_in.amount) >= 20000):
+    if features.get("speed_kmh", 0) > 500:
+        calibrated_score = max(calibrated_score, 0.94)
+    elif is_unusual_location and float(txn_in.amount) >= float(cust.avg_amount or 1450.0) * 3:
+        calibrated_score = max(calibrated_score, 0.72)
+    elif features.get("amount_ratio_mean", 1) > 20 and float(txn_in.amount) >= 20000:
         calibrated_score = max(calibrated_score, 0.88)
     elif features.get("is_new_device", 0) == 1 and float(txn_in.amount) >= 12000:
-        calibrated_score = max(calibrated_score, 0.28)
+        calibrated_score = max(calibrated_score, 0.35)
 
     risk_band = str(model_service.pipeline.predict_band(calibrated_score))
 
@@ -374,10 +490,28 @@ def process_transaction(
     else:
         p_category = "Low"
 
-    # 7. TreeSHAP Explanation & Plain-English Reason Codes
+    # 8. TreeSHAP Explanation & Plain-English Reason Codes
     exp = model_service.explainer.explain_transaction(features, top_k=3, threshold_high=th_high)
 
-    # 8. Persist Transaction in memory
+    # Add explicit physical location and velocity signals to reason codes if triggered
+    custom_reasons = []
+    if features.get("speed_kmh", 0) > 500 and prev_city and city:
+        custom_reasons.append(
+            f"Impossible physical travel velocity: {features['speed_kmh']:.0f} km/h between {prev_city} and {city} (Time elapsed: {time_since_prev_sec/60:.0f} min)"
+        )
+    if is_unusual_location and float(txn_in.amount) >= float(cust.avg_amount or 1450.0) * 3:
+        custom_reasons.append(
+            f"Unusual location anomaly: {city} is {home_dist:.0f} km from registered home base ({cust.home_city}) with high spend ratio ({float(txn_in.amount)/float(cust.avg_amount or 1450.0):.1f}x avg)"
+        )
+    if location_source == "missing_ip":
+        custom_reasons.append("Missing IP geolocation signals for online transaction")
+    elif location_source == "vpn_proxy_masked":
+        custom_reasons.append("Anonymizing VPN/Proxy detected on online payment session")
+
+    all_reasons = custom_reasons + [r for r in exp["reason_codes"] if r not in custom_reasons]
+    exp["reason_codes"] = all_reasons
+
+    # 9. Persist Transaction in memory
     txn = memory_store.create_transaction(
         external_txn_id=txn_in.external_txn_id,
         customer_id=cust.id,
@@ -386,13 +520,29 @@ def process_transaction(
         amount=Decimal(str(txn_in.amount)),
         currency=txn_in.currency,
         channel=txn_in.channel,
-        lat=txn_in.lat,
-        lon=txn_in.lon,
+        lat=lat,
+        lon=lon,
+        merchant_id=merchant_id,
+        merchant_name=merchant_name,
+        merchant_category=merchant_category,
+        terminal_id=terminal_id,
+        city=city,
+        ip_address=txn_in.ip_address,
+        location_source=location_source,
+        prev_txn_id=prev_txn_id,
+        prev_city=prev_city,
+        prev_lat=prev_lat,
+        prev_lon=prev_lon,
+        prev_merchant=prev_merchant,
+        distance_from_prev_km=distance_from_prev_km,
+        time_since_prev_sec=time_since_prev_sec,
+        speed_kmh=calc_speed_kmh,
+        is_unusual_location=is_unusual_location,
         source=txn_in.source,
         is_simulated=txn_in.is_simulated,
     )
 
-    # 9. Persist Prediction in memory
+    # 10. Persist Prediction in memory
     mv = model_service.ensure_model_version_record()
     pred = memory_store.create_prediction(
         transaction_id=txn.id,
@@ -410,7 +560,7 @@ def process_transaction(
         device_shared_cust_count=shared_cust_count,
     )
 
-    # 10. Automated Alert if Verify, Review, or Decline
+    # 11. Automated Alert if Verify, Review, or Decline
     alert_record: Alert | None = None
     if decision in ("verify", "review", "decline") or risk_band in ("medium", "high"):
         alert_record = memory_store.create_alert(
@@ -419,12 +569,12 @@ def process_transaction(
             channel="simulated",
             message=(
                 f"[SECURITY ALERT] Transaction of INR {txn_in.amount:,.2f} flagged "
-                f"({decision.upper()} - {p_category} Priority). Reply YES if authorized, or NO to freeze card."
+                f"({decision.upper()} - {p_category} Priority). Location: {city or 'Unknown'}. Reply YES if authorized, or NO to freeze card."
             ),
             status="pending",
         )
 
-    # 11. Automated Investigation record if Review or Decline (or High Risk)
+    # 12. Automated Investigation record if Review or Decline (or High Risk)
     inv_record: Investigation | None = None
     if decision in ("review", "decline") or risk_band == "high":
         inv_record = memory_store.create_investigation(
@@ -433,6 +583,7 @@ def process_transaction(
             notes=(
                 f"Automated {decision.upper()} decision: calibrated score {calibrated_score:.3f}, "
                 f"priority ₹{fin_priority:,.0f} ({p_category}). "
+                f"Location: {city} ({terminal_id or 'Online'}). "
                 f"Reason: {exp['reason_codes'][0] if exp['reason_codes'] else 'Elevated score'}"
             ),
         )
@@ -448,7 +599,21 @@ def process_transaction(
     res = _build_response(memory_store, txn, pred, alert_record, inv_record, exp)
     try:
         from app.services.stream_service import stream_broker
-        stream_broker.publish_sync(res.model_dump(mode="json"))
+        stream_broker.publish_sync({
+            "event_type": "transaction_scored",
+            "data": res.model_dump(mode="json"),
+        })
+        if alert_record is not None:
+            stream_broker.publish_sync({
+                "event_type": "alert_dispatched",
+                "data": {
+                    "customer_id": cust.external_customer_id,
+                    "message": alert_record.message,
+                    "status": alert_record.status,
+                    "provider": "FraudSentinel Bank Switch",
+                    "phone_masked": cust.phone_e164 or "+91 ••••• ••019",
+                },
+            })
     except Exception:
         pass
 
@@ -537,6 +702,22 @@ def _build_response(
         channel=txn.channel,
         lat=txn.lat,
         lon=txn.lon,
+        merchant_id=getattr(txn, "merchant_id", None),
+        merchant_name=getattr(txn, "merchant_name", None),
+        merchant_category=getattr(txn, "merchant_category", None),
+        terminal_id=getattr(txn, "terminal_id", None),
+        city=getattr(txn, "city", None),
+        ip_address=getattr(txn, "ip_address", None),
+        location_source=getattr(txn, "location_source", "terminal_pos"),
+        distance_from_prev_km=getattr(txn, "distance_from_prev_km", None),
+        time_since_prev_sec=getattr(txn, "time_since_prev_sec", None),
+        speed_kmh=getattr(txn, "speed_kmh", None),
+        is_unusual_location=getattr(txn, "is_unusual_location", False),
+        prev_txn_id=getattr(txn, "prev_txn_id", None),
+        prev_city=getattr(txn, "prev_city", None),
+        prev_lat=getattr(txn, "prev_lat", None),
+        prev_lon=getattr(txn, "prev_lon", None),
+        prev_merchant=getattr(txn, "prev_merchant", None),
         source=txn.source,
         is_simulated=txn.is_simulated,
         prediction=pred_detail,

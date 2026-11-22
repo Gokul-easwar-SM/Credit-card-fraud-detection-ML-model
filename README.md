@@ -1,137 +1,173 @@
-# FraudSentinel: Adaptive, Explainable & Adversarially-Tested Fraud Detection System
+# FraudSentinel: Bank-Side Real-Time Fraud Prevention & Geospatial Intelligence System
 
-**Academic Prototype for Final-Year B.Tech (AI & Data Science)**  
-*Perspective: Bank Fraud Risk & Operations Department*
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg)](https://fastapi.tiangolo.com/)
+[![React 18](https://img.shields.io/badge/React-18.3-61DAFB.svg)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6.svg)](https://www.typescriptlang.org/)
+[![LightGBM](https://img.shields.io/badge/LightGBM-Champion_v1-brightgreen.svg)](https://lightgbm.readthedocs.io/)
+[![TreeSHAP](https://img.shields.io/badge/Explainable_AI-TreeSHAP-orange.svg)](https://shap.readthedocs.io/)
+[![GIS Mapping](https://img.shields.io/badge/Leaflet-OpenStreetMap-green.svg)](https://leafletjs.com/)
 
-> **Disclaimer:** This is an academic engineering prototype. It strictly uses synthetic transaction streams and offline public benchmarks. It **never** connects to real bank accounts, **never** blocks real cards, and **never** stores sensitive cardholder PAN, CVV, PIN, or OTP credentials.
+**Academic Prototype for Final-Year B.Tech (Artificial Intelligence & Data Science)**  
+*Domain: Core Banking Payment Switches, Real-Time Transaction Ingestion & Financial Risk Operations*
 
----
-
-## 🏆 Project Status & Test Verification
-
-| Module | Scope | Status | Test Coverage |
-|---|---|---|---|
-| **1. Foundation** | Config, SQLite WAL / PostgreSQL fallback, 11 DB tables, Alembic migrations, `/health` | **Completed** | 28/28 passed |
-| **2. ML Pipeline & Benchmark** | 13 behavioral features, LightGBM champion + Isolation Forest blend, Platt calibration, TreeSHAP explainer, offline Kaggle ULB benchmark | **Completed** | 59/59 passed |
-| **3. Scoring & Core APIs** | Idempotent transaction scoring (`POST /transactions`), priority queue, JWT analyst auth, audit logging | **Completed** | 48/48 passed |
-| **4. Analyst Dashboard (Part B)** | React 18 + TypeScript, priority triage queue, search/filters, TreeSHAP drawer, audit logging | **Completed** | Built (`tsc` + Vite) |
-| **5. Customer Portal & Stream (Part A)** | Real-time payment evaluation form, live Server-Sent Events (SSE) ticker | **Completed** | Built (`tsc` + Vite) |
-| **6. Two-Way Customer Verification** | Interactive "Was this you?" SMS/push loop (`yes_me` -> genuine, `not_me` -> confirmed fraud) | **Completed** | Built (`tsc` + Vite) |
-| **7. Adversarial Simulator & Drift** | 5 live attack injectors, emission rate controls, sliding-window drift telemetry | **Completed** | Built (`tsc` + Vite) |
-| **Total Automated Tests** | **107/107 tests passing** (Backend APIs, ML pipeline, features, DB constraints) | **100% Pass** |
+> **Disclaimer:** FraudSentinel is an institutional bank-side prevention system operating on synthetic transaction streams and certified hardware registries. It never connects to real payment networks, never alters live cardholder funds, and complies with financial safety standards.
 
 ---
 
-## 📐 Documentation Index
+## 🏛️ System Architecture
 
-- [Project Architecture & Engineering Specification](docs/PROJECT_ARCHITECTURE.md)
-- [Behavioural Feature Engineering](docs/features.md)
-- [Model Governance Card & Benchmark Metrics](docs/model_card.md)
-- [Kaggle ULB Offline Benchmark Results](docs/kaggle_benchmark.md)
+FraudSentinel intercepts transaction events directly at the **bank payment switch** as cards are swiped at merchant POS terminals, withdrawn from ATMs, or transacted on e-commerce payment rails.
+
+```
+       [ Physical POS Terminals / ATM Networks / Online Payment Gateways ]
+                                      │
+                                      ▼ (ISO 8583 / JSON Switch Event)
+                        [ Bank Payment Switch Engine ]
+                                      │
+                                      ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                  FraudSentinel Real-Time Intelligence Pipeline               │
+│                                                                              │
+│  1. Terminal & IP Registry Lookup (Certified POS/ATM Hardware & IP Subnet)   │
+│  2. Customer Baseline Retrieval (32+ Deep Historical Norms & Spending Bands) │
+│  3. Geospatial Feature Engineering (Haversine Distance & Travel Velocity)    │
+│  4. 13-Feature Behavioral Extraction (Exact Match to Trained Model Contract) │
+│  5. Dual ML Scoring (LightGBM Supervised Champion + Isolation Forest Novelty)│
+│  6. Platt Calibration & 4-Tier Policy (Approve · Verify · Review · Decline)  │
+│  7. TreeSHAP Feature Attribution (Risk Elevating vs Protective Drivers)      │
+│  8. SSE Live Event Publication (Standardized {event_type, data} Envelope)    │
+└──────────────────────────────────────┬───────────────────────────────────────┘
+                                       │
+                                       ▼ (Real-Time SSE Stream)
+               [ Bank Analyst Operations Center & GIS Radar ]
+     (OpenStreetMap Radar · Investigation Queue · Dossiers · Simulated Card Lock)
+```
 
 ---
 
-## 🚀 Quickstart Guide (Local Development)
+## 🌟 Key Capabilities
 
-### Prerequisites
-- Python 3.11+
-- Node.js 18+ & npm
+1. **Certified Hardware Terminal Registry**: Physical locations are resolved from registered POS/ATM hardware (`POS-CJB-001`, `POS-DEL-001`, `ATM-BOM-001`) or IP subnet geolocation. Cardholders never manually select GPS coordinates.
+2. **Geospatial Transit & Velocity Vectoring**: Computes great-circle distance via the spherical **Haversine formula** and calculates physical travel speed ($\text{km/h}$). Instantly detects impossible travel velocities ($\gg 800\text{ km/h}$) while approving legitimate paced travel ($\approx 60\text{ km/h}$).
+3. **Persistent Multi-Week Customer Baselines**: Synthetic cardholders (e.g. `DEMO001` Aarav Patel with 32 historical transactions across 28 days) provide deep baselines for amount $z$-scores, spending ratios, and habitual hours.
+4. **Ensemble Machine Learning**: 
+   - **LightGBM Champion v1**: Supervised gradient-boosted decision trees (ROC-AUC **0.9889**, p95 latency **1.8 ms**).
+   - **Isolation Forest**: Unsupervised novelty detector protecting cold-start cardholders (`CUST00005`).
+   - **Platt Sigmoid Calibration**: Empirical probability calibration across 4 policy tiers (`approve`, `verify`, `review`, `decline`).
+5. **Bidirectional TreeSHAP Explainability**: Decomposes individual predictions into risk-increasing drivers versus protective baseline factors with plain-English counterfactual advice.
+6. **Real-Time Leaflet OpenStreetMap GIS Radar**: Real street-level mapping covering all Indian payment corridors with zero external API keys or watermarks.
+7. **Human-in-the-Loop Analyst Operations**: Complete investigation dossier workflow with simulated card freeze/unfreeze, step-up 2FA challenges, case escalation, and automated feedback loop dataset exports.
 
-### 1. Launch FastAPI Backend
-From the project root:
+---
+
+## ⚡ 1-Click Quickstart (Windows)
+
+To start both the **FastAPI Backend (Port 8000)** and the **React + Vite Frontend (Port 5173)** simultaneously:
+
+Double-click:
+👉 **`run_all.bat`**
+
+It automatically opens your browser tabs to:
+* **Analyst Live Radar Map**: [http://localhost:5173/analyst/live](http://localhost:5173/analyst/live)
+* **Bank Switch Simulator**: [http://localhost:5173/simulator](http://localhost:5173/simulator)
+* **Analyst Credentials**: Username: `analyst` · Password: `analyst123`
+
+---
+
+## 🛠️ Manual Terminal Launch
+
+### 1. Launch FastAPI Backend (Port 8000)
 ```powershell
-# Navigate to backend directory
 cd backend
-
-# Activate virtual environment
-..\.venv\Scripts\Activate.ps1
-
-# Run database migrations
-alembic upgrade head
-
-# Start FastAPI server on port 8000
+..\.venv\Scripts\activate
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-*Backend endpoints active at `http://localhost:8000` (Interactive Swagger docs: `http://localhost:8000/docs`).*
+*API interactive documentation active at [http://localhost:8000/docs](http://localhost:8000/docs).*
 
-### 2. Launch React + Vite Frontend
-In a second terminal window:
+### 2. Launch React + Vite Frontend (Port 5173)
 ```powershell
-# Navigate to frontend directory
-cd frontend
-
-# Start Vite development server
+cd fraudsentinel-frontend
 npm run dev
 ```
-*Open your browser at `http://localhost:5173`.*
+*Frontend application active at [http://localhost:5173](http://localhost:5173).*
 
 ---
 
-## 🔐 Pre-Seeded Academic Credentials
+## 🧪 Automated Test Verification
 
-For testing Part B (Analyst Queue & Case Actions), pre-seeded demo accounts are automatically initialized:
-- **Analyst:** `username: analyst` / `password: analyst123` (Role: `analyst`)
-- **Admin:** `username: admin` / `password: admin123` (Role: `admin`)
-*(Quick login presets are accessible directly inside the UI login modal).*
-
----
-
-## 🧪 Interactive End-to-End Verification Walkthrough
-
-1. **Part A: Customer Payment Submission & Real-Time Scoring**
-   - Navigate to the **Customer & Stream** tab.
-   - Use the payment form to simulate a checkout. Try entering a normal amount (e.g. ₹850) vs a sudden spike (e.g. ₹95,000) or clicking the *London (Speed Alert)* button.
-   - Notice the instant ML evaluation badge, calibrated probability, and actionable counterfactual advice.
-
-2. **Two-Way Customer Verification Loop ("Was this you?")**
-   - Transactions evaluated in the medium-risk band automatically trigger an alert in the middle column.
-   - Click **"Yes, it was me"**: The system clears the transaction and automatically records the resolution as `marked_genuine`.
-   - Click **"No! Fraud"**: The system immediately escalates the incident to `confirmed_fraud` and prioritizes it in the analyst queue.
-
-3. **Live SSE Transaction Stream**
-   - Observe the live ticker on the right updating in real time via Server-Sent Events (`/stream`).
-
-4. **Part B: Fraud Analyst Investigation Queue**
-   - Click **Analyst Login** (top right) and sign in using `analyst` / `analyst123`.
-   - Switch to the **Analyst Queue** tab.
-   - Review priority-ranked cases with real-time status pills, risk scores, and customer IDs.
-   - Click **Inspect** on any case to open the slide-out drawer:
-     - Review the **TreeSHAP local attribution waterfall** (+ risk multipliers in red, - stabilizers in green).
-     - Read the natural language explainability reason codes.
-     - Add investigation notes and record human decisions (**Mark Genuine**, **Confirm Fraud**, or **Under Investigation**).
-
-5. **Adversarial Attack Injector & Background Generator**
-   - Switch to the **Simulator** tab.
-   - Start the background stream at 1.0–2.5 Hz to generate synthetic traffic.
-   - Click any of the 5 targeted adversarial scenario buttons:
-     - **Amount Spike:** 20x spending jump.
-     - **Impossible Travel:** High-velocity spatial hop (>600 km/h).
-     - **Velocity Burst:** 6 transactions in 60 seconds.
-     - **New Device at Night:** Circadian 3:30 AM credential anomaly.
-     - **Shared Device Ring:** Single device hoovering across 4 distinct customer accounts.
-   - Watch the injected transactions stream live and route directly to the queue.
-
-6. **Model Governance & Runtime Drift Telemetry**
-   - Switch to the **Model & Drift** tab.
-   - Inspect offline validation PR-AUC (0.7832), ROC-AUC (0.9809), and pattern-specific recall rates.
-   - Review the cost optimization matrix ($C_{fp} = ₹50$, $C_{fn} = \text{amount}$).
-   - Inspect sliding-window data drift telemetry (high-risk rate, channel distributions, and status health).
-
----
-
-## 🛠️ Running the Automated Test Suite
-
+Execute the complete 7-scenario bank testing suite:
 ```powershell
-# Run backend API and integration tests (48 tests)
-cd backend
-..\.venv\Scripts\python.exe -m pytest -q
-
-# Run full ML, feature engineering, and simulator tests (59 tests)
-cd ..
-.\.venv\Scripts\python.exe -m pytest -q
-
-# Build frontend production bundle
-cd frontend
-npm run build
+$env:PYTHONPATH="backend"
+backend\.venv\Scripts\python -m pytest backend/tests/test_bank_scenarios.py -v
 ```
-*(All 107 repository tests pass with 0 failures).*
+
+### Test Results
+```
+tests/test_bank_scenarios.py::test_scenario_normal_usual_location PASSED         [ 14%]
+tests/test_bank_scenarios.py::test_scenario_high_value_unusual_location PASSED  [ 28%]
+tests/test_bank_scenarios.py::test_scenario_stolen_card_another_city PASSED     [ 42%]
+tests/test_bank_scenarios.py::test_scenario_impossible_travel PASSED            [ 57%]
+tests/test_bank_scenarios.py::test_scenario_new_device_unusual_location PASSED  [ 71%]
+tests/test_bank_scenarios.py::test_scenario_high_velocity_burst PASSED          [ 85%]
+tests/test_bank_scenarios.py::test_scenario_normal_new_location PASSED          [100%]
+
+======================== 7 passed in 19.06s ========================
+```
+
+---
+
+## 📂 Project Directory Structure
+
+```
+fraud-system/
+├── backend/                     # FastAPI Asynchronous REST Application
+│   ├── app/
+│   │   ├── main.py              # Application lifecycle, CORS, and router registration
+│   │   ├── api/                 # Endpoints (Simulator, Investigations, Cards, Stream, Auth)
+│   │   ├── db/
+│   │   │   └── memory_store.py  # Thread-safe in-memory state engine with deep customer history
+│   │   ├── ml/                  # LightGBM artifacts, 13-feature extractor, TreeSHAP explainer
+│   │   ├── schemas/             # Pydantic v2 schemas for request validation & response formatting
+│   │   └── services/            # Scoring pipeline, Terminal Registry, Bank Switch Simulator
+│   ├── tests/
+│   │   └── test_bank_scenarios.py # 7 Controlled demonstration scenarios test suite
+│   └── requirements.txt         # Production backend dependencies
+├── fraudsentinel-frontend/      # React 18 + Vite + TypeScript Application
+│   ├── src/
+│   │   ├── BankEventSimulator.tsx # Bank payment switch controller & scenario injector
+│   │   ├── TransactionMap.tsx   # Leaflet OpenStreetMap GIS radar component
+│   │   ├── Analyst.tsx          # Analyst Operations Center (Live, Queue, Dossiers, Analytics)
+│   │   ├── Landing.tsx          # Executive institutional landing page with 3D Canvas
+│   │   ├── api.ts               # Central API client, interfaces, and SSE useStream hook
+│   │   └── main.tsx             # React Router routing declarations
+│   └── package.json             # Frontend dependencies (React, Leaflet, Recharts, Three.js)
+├── datasets_excel/              # Master reference datasets formatted for academic presentation
+├── docs/                        # Complete technical documentation suite
+│   ├── PROJECT_ARCHITECTURE.md  # Comprehensive system architecture & mathematical derivations
+│   ├── BACKEND_SYSTEM_GUIDE.md  # Backend REST endpoints, schemas, and memory engine
+│   ├── FRONTEND_SYSTEM_GUIDE.md # Frontend routes, GIS map, and analyst operations
+│   ├── Final_Academic_Project_Report.md # Full academic research paper and report
+│   ├── features.md              # 13 Behavioral feature definitions & equations
+│   ├── model_card.md            # LightGBM & Isolation Forest governance documentation
+│   └── Render_Deployment_Guide.md # Cloud production deployment instructions
+├── models/                      # Trained model binaries and feature contracts
+│   ├── model.joblib             # LightGBM Champion binary
+│   └── features.json            # Strict 13-feature contract
+├── run_all.bat                  # 1-Click launcher for both backend and frontend
+├── start_backend.bat            # Standalone launcher for FastAPI backend
+├── start_frontend.bat           # Standalone launcher for React frontend
+└── render.yaml                  # Production blueprint configuration for Render
+```
+
+---
+
+## 📄 Documentation Suite
+
+* [System Architecture Specification](docs/PROJECT_ARCHITECTURE.md)
+* [Backend System Guide](docs/BACKEND_SYSTEM_GUIDE.md)
+* [Frontend & GIS System Guide](docs/FRONTEND_SYSTEM_GUIDE.md)
+* [Final Academic Project Report](docs/Final_Academic_Project_Report.md)
+* [Behavioral Feature Engineering](docs/features.md)
+* [Model Governance Card](docs/model_card.md)
+* [Render Cloud Deployment Guide](docs/Render_Deployment_Guide.md)

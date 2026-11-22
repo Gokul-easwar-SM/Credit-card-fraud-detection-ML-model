@@ -50,7 +50,7 @@ class InvestigationDetailResponse(BaseModel):
 class InvestigationUpdateRequest(BaseModel):
     status: str = Field(
         ...,
-        pattern="^(pending_review|under_investigation|confirmed_fraud|marked_genuine)$",
+        pattern="^(pending_review|under_investigation|confirmed_fraud|marked_genuine|escalated|step_up_requested)$",
         description="Updated human decision status",
     )
     notes: str | None = Field(None, max_length=2000, description="Analyst investigation rationale")

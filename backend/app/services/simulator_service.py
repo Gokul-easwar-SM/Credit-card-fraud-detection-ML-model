@@ -1,4 +1,17 @@
-"""Live transaction simulator service for real-time streaming demonstration."""
+"""Bank-side transaction event simulator & scenario controller.
+
+Simulates incoming payment events emitted by core banking switch infrastructure
+(POS terminals, ATM networks, and E-Commerce Payment Gateways).
+
+Implements 7 controlled academic test scenarios:
+1. normal_usual_location: Routine transaction at customer's usual location.
+2. high_value_unusual_location: Severe spend shock in an unusual city.
+3. stolen_card_another_city: Unauthorized ATM withdrawal in another city.
+4. impossible_travel: Consecutive transactions with physical travel speed > 1,500 km/h.
+5. new_device_unusual_location: Unrecognized device at late night with unusual geo-IP.
+6. high_velocity_burst: Burst of rapid transactions within minutes.
+7. normal_new_location: Modest genuine purchase in a new city (travel, not fraud).
+"""
 from __future__ import annotations
 
 import logging
@@ -9,29 +22,16 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.db.memory_store import memory_store
 from app.schemas.transaction import TransactionCreate
 from app.services.scoring import process_transaction
+from app.services.terminal_registry import REGISTERED_TERMINALS, ONLINE_GATEWAYS, IP_GEOLOCATION_TABLE
 
 logger = logging.getLogger(__name__)
 
-IST = timezone(timedelta(hours=5, minutes=30))
 
-CITIES: list[tuple[str, float, float]] = [
-    ("Chennai", 13.0827, 80.2707),
-    ("Coimbatore", 11.0168, 76.9558),
-    ("Bengaluru", 12.9716, 77.5946),
-    ("Hyderabad", 17.3850, 78.4867),
-    ("Mumbai", 19.0760, 72.8777),
-    ("Delhi", 28.6139, 77.2090),
-    ("Kolkata", 22.5726, 88.3639),
-    ("Kochi", 9.9312, 76.2673),
-]
-
-CHANNELS = ["pos", "online", "atm"]
-
-
-class SimulatorService:
-    """Manages background synthetic transaction generation."""
+class BankTransactionSimulator:
+    """Enterprise bank transaction event controller and synthetic scenario generator."""
 
     def __init__(self) -> None:
         self._thread: threading.Thread | None = None
@@ -42,33 +42,38 @@ class SimulatorService:
         self._last_emitted_at: datetime | None = None
         self._lock = threading.Lock()
 
-        # Predefined customer profiles for realistic history
-        self._customers = [f"CUST_{i:04d}" for i in range(1, 101)]
-        self._customer_cities = {
-            cid: random.choice(CITIES) for cid in self._customers
-        }
-        self._customer_devices = {
-            cid: f"DEV_{cid}_{random.randint(1, 2)}" for cid in self._customers
-        }
+        # Stable persistent customer IDs seeded in memory store
+        self.stable_customers = ["DEMO001", "CUST00001", "CUST00002", "CUST00003", "CUST00004", "CUST00005"]
+
+    def get_status(self) -> dict[str, Any]:
+        """Return live telemetry of bank switch generator."""
+        with self._lock:
+            return {
+                "is_running": self._is_running,
+                "rate_hz": self._rate_hz,
+                "emitted_count": self._emitted_count,
+                "last_emitted_at": self._last_emitted_at.isoformat() if self._last_emitted_at else None,
+                "environment": "Bank Core Switch Simulator (Sandbox / Academic Demo)",
+            }
 
     def start(self, rate_hz: float = 1.0) -> dict[str, Any]:
-        """Start background simulation thread."""
+        """Start continuous background transaction streaming from bank switch."""
         with self._lock:
             if self._is_running:
                 self._rate_hz = rate_hz
                 return self.get_status()
 
-            self._rate_hz = max(0.1, min(10.0, rate_hz))
+            self._rate_hz = max(0.2, min(5.0, rate_hz))
             self._stop_event.clear()
             self._is_running = True
-            self._thread = threading.Thread(target=self._run_loop, daemon=True)
+            self._thread = threading.Thread(target=self._run_streaming_loop, daemon=True)
             self._thread.start()
 
-        logger.info("Simulator started at rate %.1f Hz", self._rate_hz)
+        logger.info("Bank Switch Simulator started streaming at %.1f Hz", self._rate_hz)
         return self.get_status()
 
     def stop(self) -> dict[str, Any]:
-        """Stop background simulation thread."""
+        """Stop background streaming."""
         with self._lock:
             if not self._is_running:
                 return self.get_status()
@@ -78,152 +83,242 @@ class SimulatorService:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
 
-        logger.info("Simulator stopped.")
+        logger.info("Bank Switch Simulator stopped.")
         return self.get_status()
 
-    def get_status(self) -> dict[str, Any]:
-        """Return current status of simulator."""
-        return {
-            "is_running": self._is_running,
-            "rate_hz": self._rate_hz,
-            "emitted_count": self._emitted_count,
-            "last_emitted_at": self._last_emitted_at.isoformat() if self._last_emitted_at else None,
-        }
+    def inject_scenario(self, scenario_name: str, customer_id: str | None = None) -> list[dict[str, Any]]:
+        """Trigger one of the 7 controlled bank fraud & genuine test scenarios.
 
-    def inject_pattern(self, pattern: str, customer_id: str | None = None) -> list[dict[str, Any]]:
-        """Instantly generate an explicit fraud pattern episode for live demonstration."""
-        cid = customer_id or random.choice(self._customers)
-        city_name, lat, lon = self._customer_cities[cid]
+        Each scenario generates real incoming transaction events that pass through
+        the complete scoring pipeline, persist in memory, and publish to the analyst SSE stream.
+        """
+        cid = customer_id or "DEMO001"
+        cust = memory_store.get_customer(cid)
+        if cust is None:
+            cid = "DEMO001"
+            cust = memory_store.get_customer("DEMO001")
+
         now = datetime.now(timezone.utc)
-        results = []
+        results: list[dict[str, Any]] = []
 
-        SessionLocal = get_sessionmaker()
-
-        if pattern == "amount_spike":
-            # 1. Ensure established customer baseline spend
-            base_txn = TransactionCreate(
-                external_txn_id=f"SIM_BASE_{uuid.uuid4().hex[:8]}",
-                external_customer_id=cid,
-                device_key=self._customer_devices[cid],
-                occurred_at=now - timedelta(hours=2),
-                amount=round(random.uniform(300.0, 800.0), 2),
-                channel="pos",
-                lat=lat,
-                lon=lon,
-                source="simulator",
-                is_simulated=True,
+        # -------------------------------------------------------------
+        # Scenario 1: Normal transaction at customer's usual location
+        # -------------------------------------------------------------
+        if scenario_name in ("normal_usual_location", "normal_coffee"):
+            term = REGISTERED_TERMINALS["TERM-CBE-POS-101"] if cust.home_city == "Coimbatore" else (
+                REGISTERED_TERMINALS.get(f"TERM-{cust.home_city[:3].upper()}-POS-101") or REGISTERED_TERMINALS["TERM-CBE-POS-101"]
             )
-            # 2. Extreme amount spike relative to baseline
-            spike_amt = round(random.uniform(65_000.0, 95_000.0), 2)
             txn_in = TransactionCreate(
-                external_txn_id=f"SIM_SPIKE_{uuid.uuid4().hex[:8]}",
-                external_customer_id=cid,
-                device_key=self._customer_devices[cid],
-                occurred_at=now,
-                amount=spike_amt,
-                channel="online",
-                lat=lat,
-                lon=lon,
-                source="simulator",
-                is_simulated=True,
-            )
-            process_transaction(txn_in=base_txn)
-            res, _ = process_transaction(txn_in=txn_in)
-            results.append(res.model_dump(mode="json"))
-
-        elif pattern == "impossible_travel":
-            # 1. Genuine local txn in customer's home city
-            first_txn = TransactionCreate(
-                external_txn_id=f"SIM_LEGIT_{uuid.uuid4().hex[:8]}",
-                external_customer_id=cid,
-                device_key=self._customer_devices[cid],
-                occurred_at=now - timedelta(minutes=5),
-                amount=round(random.uniform(250.0, 1200.0), 2),
-                channel="pos",
-                lat=lat,
-                lon=lon,
-                source="simulator",
-                is_simulated=True,
-            )
-            # 2. Far city txn 5 minutes later (> 1500 km away)
-            far_city = "Delhi" if city_name in ("Chennai", "Coimbatore", "Bengaluru", "Kochi") else "Chennai"
-            far_lat, far_lon = [(la, lo) for (c, la, lo) in CITIES if c == far_city][0]
-
-            second_txn = TransactionCreate(
-                external_txn_id=f"SIM_TRAVEL_{uuid.uuid4().hex[:8]}",
+                external_txn_id=f"BNK-NORM-{uuid.uuid4().hex[:8].upper()}",
                 external_customer_id=cid,
                 device_key=None,
                 occurred_at=now,
-                amount=round(random.uniform(3000.0, 8500.0), 2),
-                channel="atm",
-                lat=far_lat,
-                lon=far_lon,
-                source="simulator",
-                is_simulated=True,
-            )
-            r1, _ = process_transaction(txn_in=first_txn)
-            r2, _ = process_transaction(txn_in=second_txn)
-            results.extend([r1.model_dump(mode="json"), r2.model_dump(mode="json")])
-
-        elif pattern == "new_device_night":
-            # Night time, unknown device, elevated amount
-            night_time = now.replace(hour=2, minute=random.randint(10, 50))
-            txn_in = TransactionCreate(
-                external_txn_id=f"SIM_NIGHT_{uuid.uuid4().hex[:8]}",
-                external_customer_id=cid,
-                device_key=f"DEV_UNKNOWN_{uuid.uuid4().hex[:6]}",
-                occurred_at=night_time,
-                amount=round(random.uniform(18_000.0, 40_000.0), 2),
-                channel="online",
-                lat=lat + random.uniform(-0.05, 0.05),
-                lon=lon + random.uniform(-0.05, 0.05),
-                source="simulator",
+                amount=450.00,
+                channel="pos",
+                terminal_id=term.terminal_id,
+                merchant_id=term.merchant_id,
+                merchant_name=term.merchant_name,
+                merchant_category=term.merchant_category,
+                city=term.city,
+                lat=term.lat,
+                lon=term.lon,
+                source="bank_switch",
                 is_simulated=True,
             )
             res, _ = process_transaction(txn_in=txn_in)
             results.append(res.model_dump(mode="json"))
 
-        elif pattern == "velocity_burst":
-            # Rapid barrage of 4 transactions in 60 seconds
+        # -------------------------------------------------------------
+        # Scenario 2: High-value transaction at an unusual location
+        # -------------------------------------------------------------
+        elif scenario_name in ("high_value_unusual_location", "amount_spike"):
+            # Customer from Coimbatore/Chennai transacting at Mumbai luxury jeweler for ₹88,500
+            term = REGISTERED_TERMINALS["TERM-MUM-POS-401"]  # Zaveri Jewellers Mumbai
+            txn_in = TransactionCreate(
+                external_txn_id=f"BNK-HVAL-{uuid.uuid4().hex[:8].upper()}",
+                external_customer_id=cid,
+                device_key=None,
+                occurred_at=now,
+                amount=88500.00,
+                channel="pos",
+                terminal_id=term.terminal_id,
+                merchant_id=term.merchant_id,
+                merchant_name=term.merchant_name,
+                merchant_category=term.merchant_category,
+                city=term.city,
+                lat=term.lat,
+                lon=term.lon,
+                source="bank_switch",
+                is_simulated=True,
+            )
+            res, _ = process_transaction(txn_in=txn_in)
+            results.append(res.model_dump(mode="json"))
+
+        # -------------------------------------------------------------
+        # Scenario 3: Stolen-card transaction in another city (ATM cashout)
+        # -------------------------------------------------------------
+        elif scenario_name in ("stolen_card_another_city", "stolen_card_atm"):
+            # Physical ATM cash withdrawal in Kolkata (>1800 km away)
+            term = REGISTERED_TERMINALS["ATM-KOL-01"]  # PNB ATM Park Street Kolkata
+            txn_in = TransactionCreate(
+                external_txn_id=f"BNK-STLN-{uuid.uuid4().hex[:8].upper()}",
+                external_customer_id=cid,
+                device_key=None,
+                occurred_at=now,
+                amount=25000.00,
+                channel="atm",
+                terminal_id=term.terminal_id,
+                merchant_id=term.merchant_id,
+                merchant_name=term.merchant_name,
+                merchant_category=term.merchant_category,
+                city=term.city,
+                lat=term.lat,
+                lon=term.lon,
+                source="bank_switch",
+                is_simulated=True,
+            )
+            res, _ = process_transaction(txn_in=txn_in)
+            results.append(res.model_dump(mode="json"))
+
+        # -------------------------------------------------------------
+        # Scenario 4: Impossible travel between consecutive transactions
+        # -------------------------------------------------------------
+        elif scenario_name == "impossible_travel":
+            # Event 1: Genuine swipe in Chennai 15 minutes ago
+            term_che = REGISTERED_TERMINALS["TERM-CHE-POS-201"]  # Apollo Pharmacy Chennai
+            t1 = TransactionCreate(
+                external_txn_id=f"BNK-TRV1-{uuid.uuid4().hex[:8].upper()}",
+                external_customer_id=cid,
+                device_key=None,
+                occurred_at=now - timedelta(minutes=15),
+                amount=650.00,
+                channel="pos",
+                terminal_id=term_che.terminal_id,
+                merchant_id=term_che.merchant_id,
+                merchant_name=term_che.merchant_name,
+                merchant_category=term_che.merchant_category,
+                city=term_che.city,
+                lat=term_che.lat,
+                lon=term_che.lon,
+                source="bank_switch",
+                is_simulated=True,
+            )
+            r1, _ = process_transaction(txn_in=t1)
+            results.append(r1.model_dump(mode="json"))
+
+            # Event 2: Immediate POS swipe in Delhi now (1,760 km away in 15 mins -> >7,000 km/h!)
+            term_del = REGISTERED_TERMINALS["TERM-DEL-POS-501"]  # Croma Connaught Place Delhi
+            t2 = TransactionCreate(
+                external_txn_id=f"BNK-TRV2-{uuid.uuid4().hex[:8].upper()}",
+                external_customer_id=cid,
+                device_key=None,
+                occurred_at=now,
+                amount=14800.00,
+                channel="pos",
+                terminal_id=term_del.terminal_id,
+                merchant_id=term_del.merchant_id,
+                merchant_name=term_del.merchant_name,
+                merchant_category=term_del.merchant_category,
+                city=term_del.city,
+                lat=term_del.lat,
+                lon=term_del.lon,
+                source="bank_switch",
+                is_simulated=True,
+            )
+            r2, _ = process_transaction(txn_in=t2)
+            results.append(r2.model_dump(mode="json"))
+
+        # -------------------------------------------------------------
+        # Scenario 5: New device and unusual location (late night online)
+        # -------------------------------------------------------------
+        elif scenario_name in ("new_device_unusual_location", "new_device_night"):
+            # Unseen hardware ID, night-time (02:35 AM), Delhi IP address
+            night_time = now.replace(hour=2, minute=random.randint(15, 45))
+            txn_in = TransactionCreate(
+                external_txn_id=f"BNK-DEVN-{uuid.uuid4().hex[:8].upper()}",
+                external_customer_id=cid,
+                device_key=f"DEV-UNRECOGNIZED-{uuid.uuid4().hex[:6].upper()}",
+                occurred_at=night_time,
+                amount=42500.00,
+                channel="online",
+                terminal_id="GATEWAY-APLE",
+                merchant_id="MERCH-ONL-APLE",
+                merchant_name="Apple Store Online India",
+                merchant_category="electronics",
+                ip_address="115.112.78.90",  # Delhi IP
+                source="bank_switch",
+                is_simulated=True,
+            )
+            res, _ = process_transaction(txn_in=txn_in)
+            results.append(res.model_dump(mode="json"))
+
+        # -------------------------------------------------------------
+        # Scenario 6: High transaction velocity (rapid succession burst)
+        # -------------------------------------------------------------
+        elif scenario_name in ("high_velocity_burst", "velocity_burst"):
+            amounts = [8500.00, 14200.00, 26000.00, 41500.00]
+            delays = [18, 12, 6, 0]  # minutes ago
             for i in range(4):
-                txn_in = TransactionCreate(
-                    external_txn_id=f"SIM_BURST_{uuid.uuid4().hex[:8]}",
+                t_in = TransactionCreate(
+                    external_txn_id=f"BNK-VEL{i+1}-{uuid.uuid4().hex[:8].upper()}",
                     external_customer_id=cid,
-                    device_key=self._customer_devices[cid],
-                    occurred_at=now - timedelta(seconds=(4 - i) * 15),
-                    amount=round(random.uniform(4_500.0, 9_500.0), 2),
+                    device_key=f"DEV-{cid}-A",
+                    occurred_at=now - timedelta(minutes=delays[i]),
+                    amount=amounts[i],
                     channel="online",
-                    lat=lat,
-                    lon=lon,
-                    source="simulator",
+                    terminal_id="GATEWAY-FLPK",
+                    merchant_id="MERCH-ONL-FLPK",
+                    merchant_name="Flipkart Internet Marketplace",
+                    merchant_category="ecommerce_marketplace",
+                    ip_address="49.37.112.45",
+                    source="bank_switch",
                     is_simulated=True,
                 )
-                res, _ = process_transaction(txn_in=txn_in)
+                res, _ = process_transaction(txn_in=t_in)
                 results.append(res.model_dump(mode="json"))
 
-        elif pattern == "shared_device_ring":
-            # Ring device hitting 4 distinct customers
-            ring_dev = f"DEV_RING_FRAUD_{uuid.uuid4().hex[:4]}"
-            victim_cids = random.sample(self._customers, 4)
-            for v_cid in victim_cids:
-                v_city, v_lat, v_lon = self._customer_cities[v_cid]
-                txn_in = TransactionCreate(
-                    external_txn_id=f"SIM_RING_{uuid.uuid4().hex[:8]}",
-                    external_customer_id=v_cid,
-                    device_key=ring_dev,
-                    occurred_at=now,
-                    amount=round(random.uniform(7_000.0, 16_000.0), 2),
-                    channel="online",
-                    lat=v_lat,
-                    lon=v_lon,
-                    source="simulator",
-                    is_simulated=True,
-                )
-                res, _ = process_transaction(txn_in=txn_in)
-                results.append(res.model_dump(mode="json"))
+        # -------------------------------------------------------------
+        # Scenario 7: Normal transaction from a new location (not fraud!)
+        # -------------------------------------------------------------
+        elif scenario_name in ("normal_new_location", "travel_coffee_genuine"):
+            # Customer travels domestically (e.g. Coimbatore to Bengaluru for business).
+            # To simulate genuine travel (and not impossible travel teleportation),
+            # timestamp occurs after realistic travel duration (5+ hours after prior transaction)
+            prior = memory_store.get_customer_prior_transactions(cust.id, now)
+            t_occurred = now
+            if prior:
+                last_p = prior[-1]
+                diff_sec = (now - last_p.occurred_at).total_seconds()
+                if diff_sec < 18000:  # less than 5 hours
+                    t_occurred = last_p.occurred_at + timedelta(hours=5, minutes=20)
+
+            term = REGISTERED_TERMINALS["TERM-BLR-POS-302"]  # Third Wave Coffee Koramangala
+            txn_in = TransactionCreate(
+                external_txn_id=f"BNK-TRVL-OK-{uuid.uuid4().hex[:8].upper()}",
+                external_customer_id=cid,
+                device_key=None,
+                occurred_at=t_occurred,
+                amount=780.00,  # Modest normal spend!
+                channel="pos",
+                terminal_id=term.terminal_id,
+                merchant_id=term.merchant_id,
+                merchant_name=term.merchant_name,
+                merchant_category=term.merchant_category,
+                city=term.city,
+                lat=term.lat,
+                lon=term.lon,
+                source="bank_switch",
+                is_simulated=True,
+            )
+            res, _ = process_transaction(txn_in=txn_in)
+            results.append(res.model_dump(mode="json"))
 
         else:
-            raise ValueError(f"Unknown pattern '{pattern}'. Available: amount_spike, impossible_travel, new_device_night, velocity_burst, shared_device_ring")
+            raise ValueError(
+                f"Unknown scenario '{scenario_name}'. Supported scenarios: "
+                f"normal_usual_location, high_value_unusual_location, stolen_card_another_city, "
+                f"impossible_travel, new_device_unusual_location, high_velocity_burst, normal_new_location"
+            )
 
         with self._lock:
             self._emitted_count += len(results)
@@ -231,9 +326,10 @@ class SimulatorService:
 
         return results
 
-    def _run_loop(self) -> None:
-        """Background emission loop."""
+    def _run_streaming_loop(self) -> None:
+        """Background continuous transaction stream generator."""
         iteration = 0
+        terminal_list = list(REGISTERED_TERMINALS.values())
 
         while not self._stop_event.is_set():
             delay = 1.0 / max(0.1, self._rate_hz)
@@ -244,40 +340,53 @@ class SimulatorService:
             iteration += 1
             now = datetime.now(timezone.utc)
 
-            # Occasional fraud pattern every ~25 transactions
-            if iteration % 25 == 0:
-                pattern = random.choice([
-                    "amount_spike",
-                    "impossible_travel",
-                    "new_device_night",
-                    "velocity_burst",
-                ])
-                try:
-                    self.inject_pattern(pattern)
-                except Exception as exc:
-                    logger.warning("Error injecting periodic pattern: %s", exc)
+            # Pick a customer from stable pool
+            cid = random.choice(self.stable_customers[:5])
+            cust = memory_store.get_customer(cid)
+            if cust is None:
                 continue
 
-            # Standard genuine transaction
-            cid = random.choice(self._customers)
-            _, lat, lon = self._customer_cities[cid]
-            chan = random.choice(CHANNELS)
-            dev_key = self._customer_devices[cid] if chan == "online" else None
+            # Every 15th transaction emit an attack pattern
+            if iteration % 15 == 0:
+                pattern = random.choice([
+                    "high_value_unusual_location",
+                    "impossible_travel",
+                    "new_device_unusual_location",
+                    "stolen_card_another_city",
+                ])
+                try:
+                    self.inject_scenario(pattern, customer_id=cid)
+                except Exception as exc:
+                    logger.warning("Error injecting stream pattern: %s", exc)
+                continue
 
-            # Typical transaction amount ₹150 - ₹2,500
-            amt = round(random.expovariate(1 / 750.0) + 100.0, 2)
-            amt = min(amt, 8000.0)
+            # Routine normal transaction
+            # 70% in customer's home city
+            if random.random() < 0.70:
+                home_terms = [t for t in terminal_list if t.city == cust.home_city]
+                term = random.choice(home_terms) if home_terms else random.choice(terminal_list)
+            else:
+                term = random.choice(terminal_list)
+
+            chan = term.channel
+            amt = round(random.uniform(150.0, float(cust.avg_amount or 1500.0) * 1.4), 2)
+            dev_key = f"DEV-{cid}-A" if chan == "online" else None
 
             txn_in = TransactionCreate(
-                external_txn_id=f"SIM_TXN_{uuid.uuid4().hex[:10]}",
+                external_txn_id=f"BNK-STRM-{uuid.uuid4().hex[:10].upper()}",
                 external_customer_id=cid,
                 device_key=dev_key,
                 occurred_at=now,
                 amount=amt,
                 channel=chan,
-                lat=lat + random.uniform(-0.02, 0.02),
-                lon=lon + random.uniform(-0.02, 0.02),
-                source="simulator",
+                terminal_id=term.terminal_id,
+                merchant_id=term.merchant_id,
+                merchant_name=term.merchant_name,
+                merchant_category=term.merchant_category,
+                city=term.city,
+                lat=term.lat,
+                lon=term.lon,
+                source="bank_switch",
                 is_simulated=True,
             )
 
@@ -287,8 +396,8 @@ class SimulatorService:
                     self._emitted_count += 1
                     self._last_emitted_at = now
             except Exception as exc:
-                logger.error("Simulator emission error: %s", exc)
+                logger.error("Simulator stream emission error: %s", exc)
 
 
 # Global singleton
-simulator_service = SimulatorService()
+simulator_service = BankTransactionSimulator()

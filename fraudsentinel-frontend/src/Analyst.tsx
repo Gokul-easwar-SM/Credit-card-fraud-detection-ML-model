@@ -17,6 +17,7 @@ import {
   YAxis,
 } from "recharts";
 import { api, Decision, Investigation, inr, session, useLoad, useStream, Txn } from "./api";
+import TransactionMap from "./TransactionMap";
 
 const Err = ({ m }: { m?: string }) => (m ? <div className="err">{m}</div> : null);
 const Band = ({ b }: { b: string }) => <span className={`band ${b}`}>{b}</span>;
@@ -161,8 +162,8 @@ export function Overview() {
           <h1>Operations Overview</h1>
           <span style={{ color: "var(--slate)", fontSize: 14 }}>Real-time banking fraud prevention & model telemetry</span>
         </div>
-        <Link className="btn gold" to="/customer">
-          Open Simulator
+        <Link className="btn gold" to="/simulator">
+          Bank Switch Simulator
         </Link>
       </div>
 
@@ -341,6 +342,7 @@ export function Live() {
   const nav = useNavigate();
   const [rows, setRows] = useState<Txn[]>([]);
   const [alerts, setAlerts] = useState<string[]>([]);
+  const [selectedTxn, setSelectedTxn] = useState<Txn | null>(null);
 
   // Pre-load recent transactions on mount so the feed is never empty!
   useEffect(() => {
@@ -349,6 +351,7 @@ export function Live() {
       .then((res) => {
         if (res.items?.length) {
           setRows(res.items);
+          setSelectedTxn(res.items[0]);
         }
       })
       .catch(() => {});
@@ -356,12 +359,16 @@ export function Live() {
 
   const state = useStream((t, d) => {
     if (t === "transaction_scored") {
-      setRows((r) => [d as Txn, ...r.filter((x) => x.id !== (d as Txn).id)].slice(0, 50));
+      const txn = d as Txn;
+      setRows((r) => [txn, ...r.filter((x) => x.id !== txn.id)].slice(0, 50));
+      setSelectedTxn(txn);
     }
     if (t === "alert_dispatched") {
       setAlerts((a) => [(d as { message: string }).message, ...a].slice(0, 5));
     }
   });
+
+  const activeTxn = selectedTxn ?? rows[0] ?? null;
 
   return (
     <>
@@ -369,18 +376,23 @@ export function Live() {
         <div>
           <h1>Real-time Transaction Stream</h1>
           <span style={{ color: "var(--slate)", fontSize: 14 }}>
-            Live SSE telemetry connecting directly to backend scoring pipeline
+            Live SSE telemetry connecting directly to bank switch scoring pipeline
           </span>
         </div>
-        <span className="pill" style={{ padding: "8px 16px" }}>
-          <span className={`dot ${state}`} />
-          <b>{state === "live" ? "Live Stream Active" : state === "connecting" ? "Connecting..." : "Reconnecting to SSE..."}</b>
-        </span>
+        <div className="row" style={{ gap: 10 }}>
+          <Link className="btn ghost" to="/simulator" style={{ fontSize: 12 }}>
+            ⚡ Switch Simulator
+          </Link>
+          <span className="pill" style={{ padding: "8px 16px" }}>
+            <span className={`dot ${state}`} />
+            <b>{state === "live" ? "Live Stream Active" : state === "connecting" ? "Connecting..." : "Reconnecting to SSE..."}</b>
+          </span>
+        </div>
       </div>
 
       {alerts.map((a, i) => (
-        <div className="ok" key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span>📲</span> <b>SMS Dispatched to Customer:</b> {a}
+        <div className="ok" key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+          <span>📲</span> <b>SMS Dispatched to Cardholder:</b> {a}
         </div>
       ))}
 
@@ -398,76 +410,108 @@ export function Live() {
         <div className="pill">
           <span>Inference Engine:</span> <b>LightGBM Champion (Online)</b>
         </div>
+        <div className="pill">
+          <span>Geospatial Radar:</span> <b>Active (Haversine & Speed Engine)</b>
+        </div>
+      </div>
+
+      {/* Interactive Geospatial Radar Map */}
+      <div style={{ marginBottom: 20 }}>
+        <TransactionMap currentTxn={activeTxn} historicalTxns={rows} height={380} />
       </div>
 
       {!rows.length ? (
         <div className="card" style={{ textAlign: "center", padding: "50px 20px" }}>
           <p style={{ color: "var(--slate)", fontSize: 16 }}>
-            Connecting to transaction broker... Submit a transaction from the Customer Simulator to see it appear live.
+            Connecting to bank payment switch... Inject an event from the Bank Switch Simulator to see it appear live.
           </p>
+          <Link className="btn gold" to="/simulator" style={{ marginTop: 12, display: "inline-block" }}>
+            Open Bank Switch Simulator
+          </Link>
         </div>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Txn Reference</th>
-              <th>Customer</th>
-              <th>Amount</th>
-              <th>Channel</th>
-              <th>Risk Level</th>
-              <th>AI Score</th>
-              <th>Recommendation</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((t) => (
-              <tr
-                key={t.external_txn_id}
-                className={t.investigation?.id ? "click" : ""}
-                onClick={() => {
-                  if (t.investigation?.id) {
-                    nav(`/analyst/investigations/${t.investigation.id}`);
-                  }
-                }}
-              >
-                <td>
-                  <b>{t.external_txn_id}</b>
-                </td>
-                <td>{t.external_customer_id}</td>
-                <td>{inr(t.amount)}</td>
-                <td><span className="tag">{t.channel}</span></td>
-                <td>{t.prediction && <Band b={t.prediction.risk_band} />}</td>
-                <td>
-                  {t.prediction ? (
-                    <b>{(t.prediction.calibrated_score * 100).toFixed(1)}%</b>
-                  ) : (
-                    "–"
-                  )}
-                </td>
-                <td style={{ fontSize: 13, color: "var(--slate)" }}>
-                  {t.prediction?.recommended_action ?? "allow"}
-                </td>
-                <td>
-                  {t.investigation?.id ? (
-                    <button
-                      className="btn ghost"
-                      style={{ padding: "3px 10px", fontSize: 11 }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        nav(`/analyst/investigations/${t.investigation!.id}`);
-                      }}
-                    >
-                      Open Dossier
-                    </button>
-                  ) : (
-                    <span style={{ fontSize: 11, color: "var(--slate)" }}>Monitored</span>
-                  )}
-                </td>
+        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid #E2E8F0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "var(--slate)" }}>
+              STREAM AUDIT LOG (CLICK ANY ROW TO FOCUS ON MAP)
+            </span>
+            <span style={{ fontSize: 12, color: "var(--slate)" }}>
+              {activeTxn ? `Focusing: ${activeTxn.external_txn_id} (${activeTxn.city ?? "Unknown"})` : ""}
+            </span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Txn Reference</th>
+                <th>Customer</th>
+                <th>Amount</th>
+                <th>Channel</th>
+                <th>Location / Terminal</th>
+                <th>Speed / Dist</th>
+                <th>Risk Level</th>
+                <th>AI Score</th>
+                <th>Action</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((t) => {
+                const isSelected = activeTxn?.external_txn_id === t.external_txn_id;
+                return (
+                  <tr
+                    key={t.external_txn_id}
+                    className={`click ${isSelected ? "selected-row" : ""}`}
+                    style={{ background: isSelected ? "#F1F5F9" : undefined }}
+                    onClick={() => setSelectedTxn(t)}
+                  >
+                    <td>
+                      <b>{t.external_txn_id}</b>
+                    </td>
+                    <td>{t.external_customer_id}</td>
+                    <td>{inr(t.amount)}</td>
+                    <td><span className="tag">{t.channel}</span></td>
+                    <td style={{ fontSize: 12 }}>
+                      <div><b>{t.city ?? "–"}</b></div>
+                      <div style={{ color: "var(--slate)", fontSize: 11 }}>{t.terminal_id ?? t.merchant_id ?? "–"}</div>
+                    </td>
+                    <td style={{ fontSize: 12 }}>
+                      {t.speed_kmh != null ? (
+                        <span style={{ color: t.speed_kmh > 800 ? "var(--bad)" : "inherit", fontWeight: t.speed_kmh > 800 ? 700 : 400 }}>
+                          {t.speed_kmh.toFixed(0)} km/h ({t.distance_from_prev_km?.toFixed(0)} km)
+                        </span>
+                      ) : (
+                        "–"
+                      )}
+                    </td>
+                    <td>{t.prediction && <Band b={t.prediction.risk_band} />}</td>
+                    <td>
+                      {t.prediction ? (
+                        <b>{(t.prediction.calibrated_score * 100).toFixed(1)}%</b>
+                      ) : (
+                        "–"
+                      )}
+                    </td>
+                    <td>
+                      {t.investigation?.id ? (
+                        <button
+                          className="btn ghost"
+                          style={{ padding: "3px 10px", fontSize: 11 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            nav(`/analyst/investigations/${t.investigation!.id}`);
+                          }}
+                        >
+                          Open Dossier
+                        </button>
+                      ) : (
+                        <span style={{ fontSize: 11, color: "var(--slate)" }}>Monitored</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </>
   );
@@ -499,7 +543,7 @@ export function Queue() {
             setPage(1);
           }}
         >
-          {["pending_review", "under_investigation", "confirmed_fraud", "marked_genuine"].map((s) => (
+          {["pending_review", "under_investigation", "step_up_requested", "escalated", "confirmed_fraud", "marked_genuine"].map((s) => (
             <option key={s} value={s}>
               {pretty(s).toUpperCase()}
             </option>
@@ -531,7 +575,7 @@ export function Queue() {
       ) : !d.data?.items.length ? (
         <div className="card" style={{ padding: 40, textAlign: "center", color: "var(--slate)" }}>
           <h3>No cases found for {pretty(status)}</h3>
-          <p>Submit an anomalous transaction in the simulator to generate new investigation cases.</p>
+          <p>Inject a payment scenario in the Bank Switch Simulator to generate new investigation cases.</p>
         </div>
       ) : (
         <table>
@@ -602,11 +646,13 @@ export function Detail() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [out, setOut] = useState<Decision | null>(null);
+  const [actionMsg, setActionMsg] = useState<{ type: string; message: string } | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Directly load full investigation from backend (resilient on refresh & direct URL!)
   const d = useLoad(
     () => (targetId ? api.investigation(targetId) : Promise.reject(new Error("No investigation selected"))),
-    [targetId, out?.status]
+    [targetId, out?.status, refreshKey]
   );
 
   const inv = d.data;
@@ -617,7 +663,7 @@ export function Detail() {
 
   const cards = useLoad(
     () => (out && x ? api.cards(`&search=${x.external_customer_id}`) : Promise.resolve(null)),
-    [out?.status]
+    [out?.status, refreshKey]
   );
 
   if (!targetId) {
@@ -632,10 +678,43 @@ export function Detail() {
   async function decide(status: string) {
     setBusy(true);
     setErr("");
+    setActionMsg(null);
     try {
       const res = await api.decide(targetId!, status, notes);
       setOut(res);
       setConfirm(false);
+      setActionMsg({
+        type: status,
+        message:
+          status === "marked_genuine"
+            ? "Case marked genuine. Transaction approved in audit ledger."
+            : status === "under_investigation"
+            ? "Case marked suspicious and held under active investigation."
+            : status === "step_up_requested"
+            ? "Step-up two-factor verification challenge dispatched to cardholder device (simulated)."
+            : status === "escalated"
+            ? "Case escalated to Level 2 Fraud Risk Committee for expedited review."
+            : "Confirmed fraud recorded. Protective card freeze executed and customer notified.",
+      });
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleCardLock() {
+    if (!targetId) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await api.lockCardFromInvestigation(targetId);
+      setActionMsg({
+        type: "card_lock",
+        message: `${res.message} (Simulated core banking card hold)`,
+      });
+      setRefreshKey((k) => k + 1);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -673,6 +752,121 @@ export function Detail() {
 
       {x && (
         <>
+          {/* Institutional Simulated Action Disclaimer */}
+          <div
+            style={{
+              padding: "10px 14px",
+              background: "#FEF9C3",
+              border: "1px solid #FDE047",
+              borderRadius: 8,
+              fontSize: 12,
+              color: "#854D0E",
+              marginBottom: 18,
+            }}
+          >
+            ℹ️ <b>SIMULATED BANKING ACTIONS:</b> All card locks, step-up requests, and verification triggers operate within the demonstration sandbox environment. No actual payment association networks (Visa/Mastercard/RuPay) or real cardholder balances are altered.
+          </div>
+
+          {/* Interactive Geospatial Radar Map */}
+          <div style={{ marginBottom: 18 }}>
+            <TransactionMap currentTxn={x} height={360} />
+          </div>
+
+          {/* Geospatial & Terminal Intelligence Telemetry Panel */}
+          <div className="card" style={{ marginBottom: 18 }}>
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+              <div>
+                <h3 style={{ margin: 0 }}>Geospatial & Location Intelligence</h3>
+                <p style={{ color: "var(--slate)", fontSize: 13, margin: "2px 0 0" }}>
+                  Certified terminal registry coordinates, velocity vector analysis, and location anomaly telemetry
+                </p>
+              </div>
+              <span
+                className="tag"
+                style={{
+                  fontWeight: 700,
+                  background: x.is_unusual_location ? "#FEE2E2" : "#DCFCE7",
+                  color: x.is_unusual_location ? "#991B1B" : "#166534",
+                }}
+              >
+                {x.is_unusual_location ? "⚠️ UNUSUAL LOCATION ANOMALY" : "✅ RECOGNIZED HOME CORRIDOR"}
+              </span>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10, fontSize: 13 }}>
+              <div style={{ padding: 10, background: "var(--soft)", borderRadius: 6 }}>
+                <span style={{ color: "var(--slate)", fontSize: 11 }}>Current Location & City</span>
+                <div style={{ fontWeight: 700, marginTop: 2 }}>{x.city ?? ch?.home_city ?? "Coimbatore"}</div>
+                <div style={{ fontSize: 11, color: "var(--slate)" }}>
+                  {(x.latitude ?? x.lat) != null ? `${(x.latitude ?? x.lat)!.toFixed(4)}°N, ${(x.longitude ?? x.lon)!.toFixed(4)}°E` : "N/A"}
+                </div>
+              </div>
+
+              <div style={{ padding: 10, background: "var(--soft)", borderRadius: 6 }}>
+                <span style={{ color: "var(--slate)", fontSize: 11 }}>Merchant / Terminal Hardware</span>
+                <div style={{ fontWeight: 700, marginTop: 2 }}>{x.merchant_name ?? x.terminal_id ?? "Bank Switch Gateway"}</div>
+                <div style={{ fontSize: 11, color: "var(--slate)" }}>
+                  Terminal ID: <b>{x.terminal_id ?? "N/A"}</b> · Category: <b>{x.merchant_category ?? "Retail"}</b>
+                </div>
+              </div>
+
+              <div style={{ padding: 10, background: "var(--soft)", borderRadius: 6 }}>
+                <span style={{ color: "var(--slate)", fontSize: 11 }}>Location Signal Source</span>
+                <div style={{ fontWeight: 700, marginTop: 2 }}>
+                  {x.location_source === "terminal_registry"
+                    ? "Certified Terminal Registry (POS/ATM)"
+                    : x.location_source === "ip_geolocation"
+                    ? "Cardholder IP Geolocation Subnet"
+                    : "Historical Fallback"}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--slate)" }}>
+                  IP: {x.ip_address ?? "Direct Hardware Terminal"}
+                </div>
+              </div>
+
+              <div style={{ padding: 10, background: "var(--soft)", borderRadius: 6 }}>
+                <span style={{ color: "var(--slate)", fontSize: 11 }}>Previous Transaction Reference</span>
+                <div style={{ fontWeight: 700, marginTop: 2 }}>{x.prev_city ?? "Coimbatore"} · {x.prev_merchant ?? "Historical"}</div>
+                <div style={{ fontSize: 11, color: "var(--slate)" }}>
+                  Ref: <b>{x.prev_txn_id ?? "Baseline Profile"}</b>
+                </div>
+              </div>
+
+              <div style={{ padding: 10, background: "var(--soft)", borderRadius: 6 }}>
+                <span style={{ color: "var(--slate)", fontSize: 11 }}>Distance Between Swipes</span>
+                <div style={{ fontWeight: 700, marginTop: 2 }}>
+                  {x.distance_from_prev_km != null ? `${x.distance_from_prev_km.toFixed(1)} km` : "0.0 km (Baseline)"}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--slate)" }}>
+                  Elapsed: {x.time_since_prev_sec != null
+                    ? x.time_since_prev_sec < 3600
+                      ? `${(x.time_since_prev_sec / 60).toFixed(0)} min`
+                      : `${(x.time_since_prev_sec / 3600).toFixed(1)} hrs`
+                    : "N/A"}
+                </div>
+              </div>
+
+              <div style={{ padding: 10, background: "var(--soft)", borderRadius: 6 }}>
+                <span style={{ color: "var(--slate)", fontSize: 11 }}>Calculated Travel Velocity</span>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    marginTop: 2,
+                    color: x.speed_kmh != null && x.speed_kmh > 800 ? "var(--bad)" : "inherit",
+                  }}
+                >
+                  {x.speed_kmh != null ? `${x.speed_kmh.toFixed(1)} km/h` : "N/A"}
+                </div>
+                <div style={{ fontSize: 11, color: x.speed_kmh != null && x.speed_kmh > 800 ? "var(--bad)" : "var(--slate)" }}>
+                  {x.speed_kmh != null && x.speed_kmh > 800
+                    ? "🚨 IMPOSSIBLE TRAVEL SPEED"
+                    : x.speed_kmh != null && x.speed_kmh > 120
+                    ? "⚠️ High-Speed Transit"
+                    : "✅ Physically Plausible"}
+                </div>
+              </div>
+            </div>
+          </div>
           {/* Top Row: Customer Behavioral Profile & Transaction Context */}
           <div className="two" style={{ marginBottom: 18, alignItems: "stretch" }}>
             {/* Customer Historical Baseline Profile */}
@@ -721,8 +915,11 @@ export function Detail() {
                   </div>
                 </div>
               </div>
-              <div style={{ marginTop: 10, fontSize: 12, color: "var(--slate)" }}>
-                Known Devices: <b>{ch?.known_devices?.join(", ") ?? "DEV-DEMO001-A"}</b>
+              <div style={{ marginTop: 10, fontSize: 12, color: "var(--slate)", display: "flex", flexDirection: "column", gap: 4 }}>
+                <div>Known Devices: <b>{ch?.known_devices?.join(", ") ?? "DEV-DEMO001-A"}</b></div>
+                <div>Common Channels: <b>{ch?.common_channels?.join(", ").toUpperCase() ?? "POS, ATM, ONLINE"}</b></div>
+                <div>Typical Hours: <b>{ch?.typical_hours?.length ? `${ch.typical_hours[0]}:00 – ${ch.typical_hours[ch.typical_hours.length - 1]}:00 IST` : "08:00 – 22:00 IST"}</b></div>
+                <div>Usual Corridors: <b>{ch?.usual_locations?.join(", ") ?? ch?.home_city ?? "Coimbatore"}</b></div>
               </div>
             </div>
 
@@ -917,17 +1114,41 @@ export function Detail() {
 
           {/* Analyst Decision & Resolution Panel */}
           <div className="card">
-            <h3>Analyst Review Decision & Safeguards</h3>
-            <p style={{ color: "var(--slate)", fontSize: 13, margin: "2px 0 12px" }}>
-              Human decision determines final case status. ML inference prediction remains immutable in audit records.
-            </p>
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+              <div>
+                <h3 style={{ margin: 0 }}>Analyst Review Decision & Banking Safeguards</h3>
+                <p style={{ color: "var(--slate)", fontSize: 13, margin: "2px 0 0" }}>
+                  Human decision determines final case status and triggers automated core banking protections.
+                </p>
+              </div>
+              <span className="pill">
+                Card Status: <b style={{ color: (cards.data?.items?.[0]?.status ?? ch?.card_status) === "frozen" ? "var(--bad)" : "var(--ok)", marginLeft: 4 }}>
+                  {(cards.data?.items?.[0]?.status ?? ch?.card_status ?? "ACTIVE").toUpperCase()}
+                </b>
+              </span>
+            </div>
+
+            {actionMsg && (
+              <div
+                className="ok"
+                style={{
+                  fontSize: 13,
+                  margin: "12px 0",
+                  background: actionMsg.type === "confirmed_fraud" ? "#FEF2F2" : undefined,
+                  borderColor: actionMsg.type === "confirmed_fraud" ? "var(--bad)" : undefined,
+                  color: actionMsg.type === "confirmed_fraud" ? "var(--bad)" : undefined,
+                }}
+              >
+                <b>Action Executed:</b> {actionMsg.message}
+              </div>
+            )}
 
             {role === "auditor" ? (
               <p style={{ color: "var(--slate)" }}>Auditors have read-only access to investigation files.</p>
             ) : out ? (
               <>
                 <div className="ok" style={{ fontSize: 14 }}>
-                  <b>Decision Successfully Saved:</b> {pretty(out.status).toUpperCase()}
+                  <b>Decision Saved to Audit Ledger:</b> {pretty(out.status).toUpperCase()}
                 </div>
                 {out.status === "confirmed_fraud" && (
                   <div className="note" style={{ marginTop: 10, background: "#FEF2F2", borderColor: "var(--bad)", color: "var(--bad)" }}>
@@ -936,7 +1157,7 @@ export function Detail() {
                 )}
                 {cards.data?.items?.map((c) => (
                   <div key={c.id} className="note" style={{ marginTop: 8 }}>
-                    Card <b>{c.card_number_masked}</b> status in ledger: <b>{c.status.toUpperCase()}</b>
+                    Card <b>{c.card_number_masked}</b> status in core ledger: <b>{c.status.toUpperCase()}</b>
                   </div>
                 ))}
               </>
@@ -945,7 +1166,7 @@ export function Detail() {
                 <label>Analyst Findings & Review Notes</label>
                 <textarea
                   rows={3}
-                  placeholder="e.g. Cardholder confirmed no legitimate activity in Delhi. Unrecognized device signature verified as malicious credential stuffing."
+                  placeholder="e.g. Cardholder confirmed no legitimate activity in Delhi. Unrecognized device signature and impossible travel velocity verified as credential stuffing."
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                 />
@@ -956,7 +1177,22 @@ export function Detail() {
                       ✅ Mark Genuine (Approve)
                     </button>
                     <button className="btn ghost" disabled={busy} onClick={() => decide("under_investigation")}>
-                      ⏳ Hold for Verification
+                      ⚠️ Mark Suspicious (Review)
+                    </button>
+                    <button className="btn ghost" disabled={busy} onClick={() => decide("step_up_requested")}>
+                      🔐 Request Step-Up Verification
+                    </button>
+                    <button className="btn ghost" disabled={busy} onClick={() => decide("escalated")}>
+                      ⚡ Escalate Case (L2 Risk)
+                    </button>
+                    <button
+                      className={`btn ${(cards.data?.items?.[0]?.status ?? ch?.card_status) === "frozen" ? "gold" : "ghost"}`}
+                      disabled={busy}
+                      onClick={toggleCardLock}
+                    >
+                      {(cards.data?.items?.[0]?.status ?? ch?.card_status) === "frozen"
+                        ? "🔓 Unlock Card (Simulated)"
+                        : "🔒 Temporarily Lock Card (Simulated)"}
                     </button>
                     <button className="btn bad" disabled={busy} onClick={() => setConfirm(true)}>
                       🚨 Confirm Fraud (Auto-Freeze Card & SMS)
@@ -969,7 +1205,7 @@ export function Detail() {
                       Confirming this transaction as fraud will:
                       1) Freeze the customer's payment card immediately in the database.
                       2) Dispatch a real-time SMS fraud alert to the customer's registered phone via MSG91.
-                      3) Record immutable analyst audit trail in system logs.
+                      3) Record an immutable analyst audit trail in system logs.
                     </p>
                     <div className="row" style={{ gap: 10 }}>
                       <button className="btn bad" disabled={busy} onClick={() => decide("confirmed_fraud")}>
@@ -981,6 +1217,20 @@ export function Detail() {
                     </div>
                   </div>
                 )}
+
+                <div
+                  style={{
+                    marginTop: 14,
+                    padding: "8px 12px",
+                    background: "#FEF9C3",
+                    border: "1px solid #FDE047",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    color: "#854D0E",
+                  }}
+                >
+                  ℹ️ <b>SIMULATED ACTIONS:</b> Card freezes, step-up challenges, and notifications operate strictly within the bank demo sandbox. No real-world cardholder accounts or Visa/Mastercard networks are altered.
+                </div>
               </>
             )}
           </div>

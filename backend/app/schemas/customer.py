@@ -45,6 +45,13 @@ class CustomerDetailResponse(BaseModel):
     home_lat: float | None = None
     home_lon: float | None = None
     avg_amount: float | None = None
+    std_amount: float | None = None
+    typical_hours: str | None = None
+    common_channels: list[str] = Field(default_factory=list)
+    total_historical_txns: int = 0
+    usual_locations: list[str] = Field(default_factory=list)
+    previous_fraud_count: int = 0
+    previous_flagged_count: int = 0
     phone_masked: str | None = None
     phone_e164: str | None = None
     is_simulated: bool = True

@@ -11,14 +11,20 @@ class TransactionCreate(BaseModel):
 
     external_txn_id: str = Field(..., min_length=1, max_length=64, description="Unique transaction ID from source")
     external_customer_id: str = Field(..., min_length=1, max_length=64, description="Unique customer ID")
-    device_key: str | None = Field(default=None, max_length=64, description="Device fingerprint (required for online)")
+    device_key: str | None = Field(default=None, max_length=64, description="Device fingerprint (where applicable)")
     occurred_at: datetime = Field(..., description="Timestamp of transaction occurrence")
     amount: float = Field(..., gt=0, description="Transaction amount (must be strictly positive)")
     channel: Literal["pos", "online", "atm"] = Field(..., description="Payment channel")
-    lat: float = Field(..., ge=-90.0, le=90.0, description="Latitude of transaction")
-    lon: float = Field(..., ge=-180.0, le=180.0, description="Longitude of transaction")
-    source: Literal["simulator", "manual", "sandbox"] = Field(default="manual", description="Transaction origin")
-    is_simulated: bool = Field(default=False, description="Flag indicating synthetic transaction")
+    lat: float | None = Field(default=None, ge=-90.0, le=90.0, description="Latitude (derived from terminal/IP if omitted)")
+    lon: float | None = Field(default=None, ge=-180.0, le=180.0, description="Longitude (derived from terminal/IP if omitted)")
+    merchant_id: str | None = Field(default=None, max_length=64, description="Merchant identifier")
+    merchant_name: str | None = Field(default=None, max_length=128, description="Merchant legal/trading name")
+    merchant_category: str | None = Field(default=None, max_length=64, description="Merchant category code/classification")
+    terminal_id: str | None = Field(default=None, max_length=64, description="Physical POS or ATM terminal identifier")
+    city: str | None = Field(default=None, max_length=64, description="Transaction city")
+    ip_address: str | None = Field(default=None, max_length=64, description="Customer IP address for online payments")
+    source: Literal["simulator", "manual", "sandbox", "bank_switch"] = Field(default="bank_switch", description="Transaction origin")
+    is_simulated: bool = Field(default=True, description="Flag indicating synthetic transaction")
     currency: str = Field(default="INR", max_length=3, description="ISO currency code")
 
     @field_validator("occurred_at")
@@ -84,6 +90,22 @@ class TransactionResponse(BaseModel):
     channel: str
     lat: float | None = None
     lon: float | None = None
+    merchant_id: str | None = None
+    merchant_name: str | None = None
+    merchant_category: str | None = None
+    terminal_id: str | None = None
+    city: str | None = None
+    ip_address: str | None = None
+    location_source: str | None = None
+    distance_from_prev_km: float | None = None
+    time_since_prev_sec: float | None = None
+    speed_kmh: float | None = None
+    is_unusual_location: bool | None = None
+    prev_txn_id: int | None = None
+    prev_city: str | None = None
+    prev_lat: float | None = None
+    prev_lon: float | None = None
+    prev_merchant: str | None = None
     source: str
     is_simulated: bool
     prediction: PredictionDetail | None = None

@@ -21,8 +21,11 @@ router = APIRouter(prefix="/customers", tags=["customers"])
 
 def get_customer_name(external_id: str) -> str:
     """Return friendly name for demo customer or standard formatting."""
+    c = memory_store.get_customer(external_id)
+    if c and c.name:
+        return c.name
     if external_id == "DEMO001":
-        return "FraudSentinel Demo Customer"
+        return "Aarav Patel (Primary Demo)"
     return f"Customer {external_id}"
 
 
@@ -119,6 +122,25 @@ def get_customer_profile(identifier: str) -> CustomerDetailResponse:
     if not devices:
         devices = [f"DEV-{customer.external_customer_id}-A"]
 
+    usual_cities = [customer.home_city or "Coimbatore"]
+    if prior_txns:
+        c_list = [t.city for t in prior_txns if t.city]
+        if c_list:
+            from collections import Counter
+            usual_cities = [c for c, _ in Counter(c_list).most_common(3)]
+            if customer.home_city and customer.home_city not in usual_cities:
+                usual_cities.append(customer.home_city)
+
+    prev_fraud_count = 0
+    prev_flagged_count = 0
+    for t in prior_txns:
+        pred = memory_store.get_prediction_by_txn_id(t.id)
+        if pred and pred.risk_band in ("medium", "high"):
+            prev_flagged_count += 1
+        inv = memory_store.get_investigation_by_txn_id(t.id)
+        if inv and inv.status == "confirmed_fraud":
+            prev_fraud_count += 1
+
     return CustomerDetailResponse(
         id=customer.id,
         external_customer_id=customer.external_customer_id,
@@ -127,6 +149,13 @@ def get_customer_profile(identifier: str) -> CustomerDetailResponse:
         home_lat=customer.home_lat,
         home_lon=customer.home_lon,
         avg_amount=float(customer.avg_amount) if customer.avg_amount is not None else None,
+        std_amount=float(customer.std_amount) if customer.std_amount is not None else 400.0,
+        typical_hours=customer.typical_hours or "08:30 - 21:30",
+        common_channels=customer.common_channels or ["pos", "online", "atm"],
+        total_historical_txns=len(prior_txns),
+        usual_locations=usual_cities,
+        previous_fraud_count=prev_fraud_count,
+        previous_flagged_count=prev_flagged_count,
         phone_masked=mask_phone_number(customer.phone_e164),
         phone_e164=customer.phone_e164,
         is_simulated=customer.is_simulated,

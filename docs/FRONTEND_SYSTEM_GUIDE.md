@@ -1,27 +1,24 @@
 # FraudSentinel – Frontend Architecture & UI System Guide
 
+**System Component:** Single-Page Financial Intelligence Dashboard  
+**Framework:** React 18.3 + TypeScript 5.6 + Vite 5.4 · Port 5173  
+**Mapping Engine:** Leaflet 1.9 + OpenStreetMap / Esri Tiles
+
 ---
 
 ## 1. Overview & Technology Stack
 
-The FraudSentinel frontend is an institutional-grade financial intelligence interface designed for both banking fraud analysts and cardholder customers. It combines real-time streaming, interactive graph topology, and explainable AI visualizations in a white-first modern fintech aesthetic.
+The FraudSentinel frontend is an institutional-grade financial intelligence interface designed for bank fraud analysts and risk operations teams. It combines real-time streaming, interactive Leaflet GIS mapping, and explainable AI visualizations in a modern financial design system.
 
 ### Core Technologies
 * **Framework:** React 18.3 (Single Page Application)
 * **Language & Tooling:** TypeScript 5.6 + Vite 5.4 (sub-second HMR and optimized production bundling)
 * **Routing:** React Router DOM 6.28
-* **Visualizations:** Recharts 2.13 (ROC/PR curves, confusion matrix) + HTML5 Canvas (Relationship Graph)
-* **Styling System:** Modern Vanilla CSS3 Design System (`styles.css`) using CSS custom properties (variables), responsive flex/grid layouts, and zero heavy CSS framework bloat.
-* **Real-time Protocol:** Server-Sent Events (SSE) via native `EventSource` with auto-reconnect.
+* **GIS Mapping Engine:** **Leaflet 1.9 + OpenStreetMap & Esri GIS tiles** (100% free, zero external API keys, zero watermarks, street-level resolution across India)
+* **Visualizations:** Recharts 2.13 (ROC/PR curves, confusion matrix, financial priority distributions) + Three.js / React Three Fiber (3D interactive card rendering on landing page)
+* **Styling System:** Modern Vanilla CSS3 Design System (`styles.css`) using CSS variables, responsive flex/grid layouts, and zero framework overhead.
+* **Real-time Protocol:** Server-Sent Events (SSE) via native `EventSource` with auto-reconnect and standardized event envelopes.
 * **Production Hosting:** Render Static Site CDN with SPA rewrite rules (`/* -> /index.html`).
-
-### Visual Palette
-* **Canvas White:** `#FFFFFF` (clean financial primary canvas)
-* **Ice Silver / Soft:** `#F4F6F8` / `#DCE3E8` (cards, containers, subtle borders)
-* **Deep Aubergine:** `#25162F` (typography, high-contrast headers, active state accents)
-* **Marigold Gold:** `#E6AD3C` (warnings, high-priority badges, counterfactual highlights)
-* **Emerald Green:** `#10B981` (genuine approvals, trust-building indicators)
-* **Crimson Red:** `#EF4444` (critical decline, fraud-pushing SHAP bars, frozen card state)
 
 ---
 
@@ -30,116 +27,69 @@ The FraudSentinel frontend is an institutional-grade financial intelligence inte
 ```
 fraudsentinel-frontend/
 ├── index.html                   # HTML5 Entrypoint with inter/lexend typography
-├── package.json                 # Dependencies (React, Recharts, Three, Router)
+├── package.json                 # Dependencies (React, Recharts, Three, Leaflet, Router)
 ├── tsconfig.json                # Strict TypeScript configuration
-├── vite.config.ts               # Vite build settings & dev server proxy
+├── vite.config.ts               # Vite build configuration
 ├── src/
 │   ├── main.tsx                 # Route declarations & global providers
-│   ├── api.ts                   # Centralized API client & TypeScript interfaces
+│   ├── api.ts                   # Centralized API client, TypeScript interfaces, and useStream hook
 │   ├── styles.css               # Design system, CSS variables, and animation classes
-│   ├── Landing.tsx              # Public executive landing page
-│   ├── Customer.tsx             # Customer Simulator, 2-way verification & card freeze
-│   └── Analyst.tsx              # Comprehensive analyst workspace (7 modules)
-└── dist/                        # Production build output deployed to Render
+│   ├── Landing.tsx              # Executive institutional landing page with 3D Canvas
+│   ├── BankEventSimulator.tsx   # Bank-side payment switch controller & 7 demo scenarios
+│   ├── TransactionMap.tsx       # Leaflet OpenStreetMap GIS radar component
+│   └── Analyst.tsx              # Comprehensive analyst operations suite (7 sub-modules)
+└── dist/                        # Production build output
 ```
 
 ---
 
 ## 3. Page Routes & User Journeys
 
-### Route 1: Public Landing Page (`/`)
+### Route 1: Executive Landing Page (`/`)
 * **Component:** `Landing.tsx`
-* **Purpose:** Introduces the platform to bank stakeholders and academic evaluators.
+* **Purpose:** Introduces FraudSentinel as an enterprise bank-side fraud prevention system.
 * **Key Features:**
-  * Executive platform overview and core architectural differentiators.
-  * System health check and active API status badge.
-  * Direct one-click portals to the **Customer Simulator** and **Analyst Workspace**.
+  * 3D Canvas card visualization rendered via Three.js.
+  * Executive overview of bank switch ingestion, behavioral analytics, and explainable AI.
+  * Direct portals to the **Analyst Operations Center** (`/analyst`) and **Bank Switch Simulator** (`/simulator`).
 
-### Route 2: Customer Transaction Simulator (`/customer`)
-* **Component:** `Customer.tsx`
-* **Purpose:** Simulates customer-side card transactions, fraud attacks, and real-time 2-way verification.
+### Route 2: Bank Switch Event Controller (`/simulator`)
+* **Component:** `BankEventSimulator.tsx` (Legacy `/customer` route redirects here)
+* **Purpose:** Acts as the internal bank payment switch generator for testing and academic demonstration.
 * **Key Features:**
-  1. **Demo Profile Selection:** Pre-loads **Priya Sharma (`DEMO001`)** with home city Coimbatore and masked card `•••• •••• •••• 9901`.
-  2. **5 One-Click Attack & Spend Presets:**
-     * `☕ Regular Coffee (₹350)` $\rightarrow$ Routine baseline spend; frictionless approval.
-     * `🚨 Impossible Travel (₹98,500)` $\rightarrow$ Delhi online swipe 15 mins after Coimbatore swipe; 1500 km/h anomaly.
-     * `⚡ Rapid Velocity Burst (₹28,500)` $\rightarrow$ High-frequency spend spike triggering velocity multipliers.
-     * `📱 Unrecognized Device (₹14,500)` $\rightarrow$ Swiped from a new hardware fingerprint never seen on the account.
-     * `📍 Unusual Location (₹6,200)` $\rightarrow$ Sudden geo-deviation without physical velocity violation.
-  3. **Interactive 2-Way Verification Modal:**
-     * Triggers when the decision engine marks a transaction as `VERIFY` or `DECLINE`.
-     * Cardholder prompt: *"Did you attempt ₹98,500 at Delhi? Reply YES or NO"*.
-     * If cardholder clicks *"❌ No, I did not make this transaction"*:
-       * Backend auto-freezes card.
-       * UI immediately updates card badge to **FROZEN (Automated Protection Hold Active)**.
-       * Event broadcasts across the platform via SSE.
+  1. **7 One-Click Controlled Demo Scenarios**:
+     * `1. Normal Transaction (Usual Location)`: Aarav Patel ₹450 coffee in Coimbatore $\rightarrow$ Approved (<15% risk).
+     * `2. High-Value at Unusual Location`: Aarav Patel ₹85,000 at Delhi Luxury Jewelers $\rightarrow$ Flagged for Review (>75% risk).
+     * `3. Stolen-Card in Another City`: Aarav Patel ₹48,000 in Mumbai $\rightarrow$ Flagged for Review (>70% risk).
+     * `4. Impossible Travel Velocity`: Swiped in Bengaluru 15 min after Coimbatore (1,441 km/h) $\rightarrow$ Critical Speed Flag.
+     * `5. New Device & Unusual Location`: Online ₹24,000 swipe on unmapped IP $\rightarrow$ Step-Up Verification.
+     * `6. High Transaction Velocity`: 4 rapid ATM withdrawals in 3 minutes $\rightarrow$ Velocity Burst Flag.
+     * `7. Normal Spend at New Location (Legitimate Travel)`: Lunch in Bengaluru 5 hours later (60 km/h) $\rightarrow$ Approved (<25% risk).
+  2. **Custom Bank Switch Event Builder**:
+     * Select persistent cardholders (`DEMO001`, `CUST00001` through `CUST00005`).
+     * Inspect verified baseline spending profile and historical transaction count.
+     * Select payment channel (**POS**, **ATM**, or **Online**).
+     * For POS/ATM: Choose certified hardware terminal from the registry; coordinates and merchant details auto-populate.
+     * For Online: Choose payment gateway and cardholder client IP subnet; IP geolocation is resolved automatically.
+  3. **Continuous Background Stream Controller**:
+     * Start/Stop 1.0 Hz automated switch transaction feed.
 
-### Route 3: Analyst Portal (`/analyst`)
-* **Component:** `Analyst.tsx` (Protected by JWT login at `/analyst/login`)
-* **Default Credentials:** Username: `analyst` | Password: `analyst123`
-* **The 7 Analyst Workspace Modules:**
-  1. **Overview:** Executive KPIs (Live Detection Rate, Volume At Risk ₹, Active Protection Holds, Average Risk Score).
-  2. **Live Feed:** Real-time transaction stream via Server-Sent Events (SSE). New transactions appear at the top without page refresh.
-  3. **Investigation Queue:**
-     * Tabbed filtering (*Pending Review*, *Under Investigation*, *Resolved Cases*).
-     * Color-coded 4-tier decision badges (`APPROVE`, `VERIFY`, `REVIEW`, `DECLINE`).
-     * Financial Priority Score ($FPS$) sort order ensuring highest monetary exposure is worked first.
-     * **1-Click "Export Feedback Dataset (CSV)"** for model retraining and audit archives.
-  4. **Case Dossier (`/analyst/investigations/:id`):**
-     * **TreeSHAP Feature Attribution Bar Chart:** Red horizontal bars indicate fraud-pushing features (e.g. `speed_kmh`, `amount_ratio_mean`); Green horizontal bars indicate trust-building habits.
-     * **Actionable Counterfactual Box:** *"What would need to change for this transaction to be approved?"*
-     * **Cold-Start Indicator:** Flags customer history level (`cold_start`, `developing`, `mature`).
-     * **Multi-Account Device Warning:** Highlights if the hardware is shared with other customers.
-     * **Analyst Action Buttons:** *Confirm Fraud* (initiates chargeback & card freeze) or *Mark Genuine* (whitelists device).
-  5. **Cards Management:** Real-time card statuses, limits, and manual freeze/unfreeze toggles.
-  6. **Relationship Graph (`/analyst/relationships`):**
-     * HTML5 Canvas node-link diagram rendering Customer Nodes (Blue circles) and Device Nodes (Purple diamonds).
-     * Edge lines represent financial transactions.
-     * Table of **Discovered Mule Ring Clusters** highlighting hardware shared across multiple distinct cardholders (e.g., `DEV-MULE-SHARED-09` linking `CUST00002` and `CUST00003`).
-  7. **ML Model Analytics (`/analyst/analytics`):**
-     * Interactive ROC Curve ($\text{AUC} = 0.9841$) and Precision-Recall Curve ($\text{PR-AUC} = 0.8519$).
-     * Confusion Matrix on 56,962 test transactions.
-     * **Live Population Stability Index (PSI) Drift Monitor:** Gauges distribution shifts in real time.
-     * **Kaggle Benchmark Display (Pipeline B):** Shows the 284,807 European cardholder dataset with explicit architectural separation callout.
-
----
-
-## 4. API Client & State Management
-
-In [`src/api.ts`](file:///c:/Users/THANGA%20ANGEL%20M/Desktop/Credit-Card-Fraud-Detection/fraud-system/fraudsentinel-frontend/src/api.ts), the base API URL is determined dynamically:
-
-```typescript
-export const BASE: string =
-  (typeof window !== "undefined" && localStorage.getItem("fraudsentinel_api_url")) ||
-  import.meta.env.VITE_API_URL ||
-  (typeof window !== "undefined" && window.location.hostname === "localhost"
-    ? "http://localhost:8000"
-    : "https://fraudsentinel-lxzr.onrender.com");
-```
-
-### Key API Methods
-* `api.login(username, password)` $\rightarrow$ Stores JWT in `localStorage` under `fraudsentinel_token`.
-* `api.simulate(payload)` $\rightarrow$ `POST /transactions` with 13 behavioral signals.
-* `api.relationships()` $\rightarrow$ `GET /relationships/graph` returns node-link JSON and clusters.
-* `api.drift()` $\rightarrow$ `GET /metrics/drift` returns Population Stability Index and feature drift.
-* `api.kaggleBenchmark()` $\rightarrow$ `GET /metrics/kaggle-benchmark` returns offline dataset comparison.
-* `api.respondAlert(alertId, response)` $\rightarrow$ `POST /alerts/:id/respond` (`"yes_me"` or `"not_me"`).
-* `useStream(callback)` $\rightarrow$ Subscribes to `GET /stream/transactions` via Server-Sent Events.
-
----
-
-## 5. Render Deployment Configuration
-
-Configured in `render.yaml` as a **Static Site**:
-* **Runtime:** `static`
-* **Root Directory:** `fraudsentinel-frontend`
-* **Build Command:** `npm install && npm run build`
-* **Publish Directory:** `dist`
-* **Environment Variable:** `VITE_API_URL = https://fraudsentinel-lxzr.onrender.com`
-* **SPA Rewrite Rule:**
-  ```yaml
-  routes:
-    - type: rewrite
-      source: /*
-      destination: /index.html
-  ```
+### Route 3: Analyst Operations Portal (`/analyst`)
+* **Component:** `Analyst.tsx` (Requires login: `analyst / analyst123`)
+* **Sub-Modules:**
+  1. **Overview (`/analyst`)**: Executive KPIs, model health metrics (ROC-AUC 0.9889, p95 Latency 1.8 ms), and risk volume distributions.
+  2. **Live Feed (`/analyst/live`)**:
+     * Real-time SSE stream table.
+     * Embedded **Leaflet OpenStreetMap GIS Radar** plotting incoming transactions, route vectors, and travel speeds in real time.
+     * Click any row to focus the map and inspect telemetry.
+  3. **Investigation Queue (`/analyst/queue`)**: Priority-ranked triage queue sorted by Financial Priority Score ($\text{FPS} = \text{Amount} \times P(\text{Fraud})$).
+  4. **Investigation Dossier (`/analyst/investigations/:id`)**:
+     * Embedded interactive Leaflet GIS map with route polylines.
+     * Geospatial & Terminal Intelligence Panel (hardware terminal ID, merchant category, coordinates, distance, speed).
+     * Customer Behavioral Baseline (32 prior transactions, home corridor, spend norms, typical hours, common channels).
+     * Bidirectional TreeSHAP Attribution (factors increasing risk vs factors reducing risk).
+     * MSG91 Customer Fraud Notification Status card.
+     * Analyst Decision Actions (`Mark Genuine`, `Mark Suspicious`, `Request Step-Up Verification`, `Escalate Case`, `Temporarily Lock Card`, `Confirm Fraud`).
+  5. **Card Security Portfolio (`/analyst/cards`)**: View card statuses and toggle simulated locks.
+  6. **Relationship Graph (`/analyst/relationships`)**: HTML5 canvas graph visualizing shared devices and fraud rings.
+  7. **ML Model Analytics (`/analyst/analytics`)**: Interactive ROC-AUC curves, PR curves, feature importance bar charts, and confusion matrix.
